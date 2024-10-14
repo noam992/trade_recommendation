@@ -1,0 +1,6 @@
+yfinance
+pandas
+backtesting
+matplotlib
+boto3
+python-dotenv
