@@ -232,20 +232,20 @@ def generate_recommendations(symbols, start_date, end_date):
         try:
             results, data, trades, equity_curve = backtest_strategy(symbol, start_date, end_date)
 
-            daily_pct_returns = equity_curve['Equity'].pct_change().dropna()
-            EntryTime = trades['EntryTime']
-            ExitTime = trades['ExitTime']
-            daily_equity = equity_curve['Equity']
-            trade_equity = daily_equity.loc[EntryTime[0]:ExitTime[0]]
-            duration = results['Duration'].days
-            metrics = PerformanceMetrics(data, daily_pct_returns, daily_equity, trade_equity, duration)
-            sharpe_ratio = metrics.calculate_sharpe_ratio()
-            max_drawdown = metrics.calculate_max_drawdown()
-            sortino_ratio = metrics.calculate_sortino_ratio()
+            # daily_pct_returns = equity_curve['Equity'].pct_change().dropna()
+            # EntryTime = trades['EntryTime']
+            # ExitTime = trades['ExitTime']
+            # daily_equity = equity_curve['Equity']
+            # trade_equity = daily_equity.loc[EntryTime[0]:ExitTime[0]]
+            # duration = results['Duration'].days
+            # metrics = PerformanceMetrics(data, daily_pct_returns, daily_equity, trade_equity, duration)
+            # sharpe_ratio = metrics.calculate_sharpe_ratio()
+            # max_drawdown = metrics.calculate_max_drawdown()
+            # sortino_ratio = metrics.calculate_sortino_ratio()
 
-            print(f"{symbol} Sharpe Ratio: {sharpe_ratio:.3f}")
-            print(f"{symbol} Max Drawdown: {max_drawdown:.3f}")
-            print(f"{symbol} Sortino Ratio: {sortino_ratio:.3f}")
+            # print(f"{symbol} Sharpe Ratio: {sharpe_ratio:.3f}")
+            # print(f"{symbol} Max Drawdown: {max_drawdown:.3f}")
+            # print(f"{symbol} Sortino Ratio: {sortino_ratio:.3f}")
 
             recommendations.append({
                 'symbol': symbol,
@@ -344,7 +344,7 @@ def create_html_content(rcontent, start_date, symbols, recommendations):
             <ul>
                 <li><strong>תשואה צפויה (Expected Return):</strong> האחוז הצפוי של רווח או הפסד על ההשקעה.</li>
                 <li><strong>יחס שארפ (Sharpe Ratio):</strong> מדד לתשואה מתואמת סיכון, המשווה בין התגמול לסיכון.</li>
-                <li><strong>שפל מרבי (Max Drawdown):</strong> הירידה הגדולה ביותר מפסגה לשפל במהלך תקופה מסוימת.</li>
+                <li><strong>שפל מרבי (Max Drawdown):</strong> הירידה הגדולה ביותר מפסגה לשפל במהלך התקופה.</li>
             </ul>
             </p>
 
@@ -383,26 +383,6 @@ def send_email(remail, rsubject, rcontent, start_date, symbols, recommendations)
         # Add image reference to HTML
         html_content += f'<img src="cid:{symbol}_image" alt="{symbol} Stock Indicators"><br>'
 
-    # Attach measures_explains.png
-    with open(f'{project_root}/assets/measures_explains.png', 'rb') as f:
-        img_data = f.read()
-        image = MIMEImage(img_data)
-        image.add_header('Content-ID', '<measures_explains>')
-        image.add_header('Content-Disposition', 'inline', filename='measures_explains.png')
-        msg.attach(image)
-    
-    # Attach measures_explains_examples.png
-    with open(f'{project_root}/assets/measures_explains_examples.png', 'rb') as f:
-        img_data = f.read()
-        image = MIMEImage(img_data)
-        image.add_header('Content-ID', '<measures_explains_examples>')
-        image.add_header('Content-Disposition', 'inline', filename='measures_explains_examples.png')
-        msg.attach(image)
-
-    # Add image references to HTML
-    html_content += '<img src="cid:measures_explains" alt="Measures Explanations"><br>'
-    html_content += '<img src="cid:measures_explains_examples" alt="Measures Explanations Examples"><br>'
-
     try:
         with smtplib.SMTP(host='smtp.gmail.com', port=587) as smtp:     
             smtp.ehlo()
@@ -426,8 +406,6 @@ def monthly_trading_suggestion(symbols, num_activities=10):
     prompt = create_one_prompt(recommendations, num_activities=10, all_symbols=symbols, start_date=start_date)
 
     bedrock_response = get_response_from_bedrock(prompt)
-    print("\nBedrock Analysis:")
-    print(bedrock_response)
     
     email_subject = "המלצות מסחר חודשיות"
     email_body = f"{bedrock_response}"
