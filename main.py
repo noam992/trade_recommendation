@@ -161,6 +161,51 @@ def calculate_rsi(data, window):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
+class PerformanceMetrics:
+    def __init__(self, data, daily_pct_returns, daily_equity, trade_equity, duration):
+        self.data = data
+        self.daily_pct_returns = daily_pct_returns
+        self.daily_equity = daily_equity
+        self.trade_equity = trade_equity
+        self.duration = duration
+
+    def geometric_mean(self, returns: pd.Series) -> float:
+        returns = returns.fillna(0) + 1
+        if np.any(returns <= 0):
+            return 0
+        return np.exp(np.log(returns).sum() / (len(returns) or np.nan)) - 1
+
+    def calculate_sharpe_ratio(self, risk_free_rate=0.00):
+        daily_returns = self.daily_equity.resample('D').last().dropna().pct_change()
+        gmean_day_return = self.geometric_mean(daily_returns)
+        annual_trading_days = float( 365 if self.daily_equity.index.dayofweek.to_series().between(5, 6).mean() > 2/7 * .6 else 252)
+        annualized_volatility = np.sqrt((daily_returns.var(ddof=int(bool(daily_returns.shape))) + (1 + gmean_day_return)**2)**annual_trading_days - (1 + gmean_day_return)**(2*annual_trading_days)) * 100
+
+        annualized_return = (1 + gmean_day_return)**annual_trading_days - 1
+        return_ann = annualized_return * 100
+        
+        if annualized_volatility != 0:
+            sharpe_ratio = (return_ann - risk_free_rate) / annualized_volatility
+            return sharpe_ratio
+        else:
+            return 0
+
+    def calculate_max_drawdown(self):
+        cumulative_returns = (1 + self.daily_pct_returns).cumprod()
+        peak = cumulative_returns.cummax()
+        drawdown = (cumulative_returns - peak) / peak
+        max_drawdown = drawdown.min()
+        return max_drawdown
+
+    def calculate_sortino_ratio(self, risk_free_rate=0.02):
+        downside_returns = self.daily_pct_returns[self.daily_pct_returns < 0]
+        downside_std = downside_returns.std()
+        if downside_std != 0:
+            sortino_ratio = (self.daily_pct_returns.mean() - risk_free_rate) / downside_std
+            return sortino_ratio
+        else:
+            return 0
+
 class StockStrategy(Strategy):
     def init(self):
         self.sma_short = self.I(calculate_sma, self.data.df, 20)
@@ -177,16 +222,37 @@ def backtest_strategy(symbol, start_date, end_date):
     data = get_stock_data(symbol, start_date, end_date)
     bt = Backtest(data, StockStrategy, cash=1000, commission=.0025)
     results = bt.run()
-    return results, data
+    trades = results['_trades']
+    equity_curve = results['_equity_curve']
+    return results, data, trades, equity_curve
 
 def generate_recommendations(symbols, start_date, end_date):
     recommendations = []
     for symbol in symbols:
         try:
-            results, data = backtest_strategy(symbol, start_date, end_date)
+            results, data, trades, equity_curve = backtest_strategy(symbol, start_date, end_date)
+
+            daily_pct_returns = equity_curve['Equity'].pct_change().dropna()
+            EntryTime = trades['EntryTime']
+            ExitTime = trades['ExitTime']
+            daily_equity = equity_curve['Equity']
+            trade_equity = daily_equity.loc[EntryTime[0]:ExitTime[0]]
+            duration = results['Duration'].days
+            metrics = PerformanceMetrics(data, daily_pct_returns, daily_equity, trade_equity, duration)
+            sharpe_ratio = metrics.calculate_sharpe_ratio()
+            max_drawdown = metrics.calculate_max_drawdown()
+            sortino_ratio = metrics.calculate_sortino_ratio()
+
+            print(f"{symbol} Sharpe Ratio: {sharpe_ratio:.3f}")
+            print(f"{symbol} Max Drawdown: {max_drawdown:.3f}")
+            print(f"{symbol} Sortino Ratio: {sortino_ratio:.3f}")
+
             recommendations.append({
                 'symbol': symbol,
+                'EntryTime': trades['EntryTime'],
+                'ExitTime': trades['ExitTime'],
                 'return': results['Return [%]'],
+                'equity_final': results['Equity Final [$]'],
                 'sharpe_ratio': results['Sharpe Ratio'],
                 'max_drawdown': results['Max. Drawdown [%]'],
                 'last_price': data['Close'].iloc[-1],  # Use .iloc[-1] instead of [-1]
@@ -356,50 +422,17 @@ def monthly_trading_suggestion(symbols, num_activities=10):
     start_date = end_date - timedelta(days=365)  # Use 1 year of historical data
     
     recommendations = generate_recommendations(symbols, start_date, end_date)
-
-    # Find NVDA in recommendations
-    nvda_rec = next((rec for rec in recommendations if rec['symbol'] == 'NVDA'), None)
     
-    if nvda_rec:
-        nvda_data = nvda_rec['data']
-        
-        # Create a prompt for Bedrock with NVDA data and calculations
-        nvda_prompt = f"""
-        Analyze the NVDA (NVIDIA) stock data and explain how the following measures are calculated:
-        
-        1. Expected Return: {nvda_rec['return']:.2f}%
-        2. Sharpe Ratio: {nvda_rec['sharpe_ratio']:.2f}
-        3. Max Drawdown: {nvda_rec['max_drawdown']:.2f}%
+    prompt = create_one_prompt(recommendations, num_activities=10, all_symbols=symbols, start_date=start_date)
 
-        Use the following data points to explain the calculations:
-
-        Start Date: {nvda_data.index[0].date()}
-        End Date: {nvda_data.index[-1].date()}
-        Starting Price: ${nvda_data['Close'].iloc[0]:.2f}
-        Ending Price: ${nvda_data['Close'].iloc[-1]:.2f}
-        Highest Price: ${nvda_data['Close'].max():.2f} on {nvda_data['Close'].idxmax().date()}
-        Lowest Price: ${nvda_data['Close'].min():.2f} on {nvda_data['Close'].idxmin().date()}
-
-        Please provide a detailed explanation of how each measure is calculated using these specific data points and dates.
-        if its help the final results got from the backtest with arguments:
-        bt = Backtest(data, StockStrategy, cash=1000, commission=.0025)
-        results = bt.run()
-        """
-
-        bedrock_response = get_response_from_bedrock(nvda_prompt)
-        print("\nBedrock Analysis for NVDA:")
-        print(bedrock_response)
+    bedrock_response = get_response_from_bedrock(prompt)
+    print("\nBedrock Analysis:")
+    print(bedrock_response)
     
-    # prompt = create_one_prompt(recommendations, num_activities=10, all_symbols=symbols, start_date=start_date)
+    email_subject = "המלצות מסחר חודשיות"
+    email_body = f"{bedrock_response}"
 
-    # bedrock_response = get_response_from_bedrock(prompt)
-    # print("\nBedrock Analysis:")
-    # print(bedrock_response)
-    
-    # email_subject = "המלצות מסחר חודשיות"
-    # email_body = f"{bedrock_response}"
-
-    # send_email(EMAIL_RECIPIENTS, email_subject, email_body, start_date, symbols, recommendations)
+    send_email(EMAIL_RECIPIENTS, email_subject, email_body, start_date, symbols, recommendations)
 
 # Example usage
 symbols = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'FB', 'TSLA', 'NVDA', 'JPM', 'V', 'JNJ', 'WMT', 'PG', 'DIS', 'NFLX', 'ADBE']
