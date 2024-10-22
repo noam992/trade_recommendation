@@ -4,3 +4,6 @@ backtesting
 matplotlib
 boto3
 python-dotenv
+opencv-python
+numpy
+selenium
