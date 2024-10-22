@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 project_root = Path(__file__).parent
 load_dotenv(project_root / '.env')
 
-SYMBOLS = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 'NVDA', 'JPM', 'V', 'JNJ', 'WMT', 'PG', 'DIS', 'NFLX', 'ADBE']
+SYMBOLS = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 'NVDA', 'JPM', 'V', 'JNJ', 'WMT', 'PG', 'DIS', 'NFLX', 'ADBE', 'SPY', 'QQQ', 'XOM', 'TLT', 'GLD', 'META', 'AMD', 'COIN', 'MARA', 'MU', 'SBUX', 'DVN', 'PLTR']
 
 # Email parameters
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL_TRADE')
