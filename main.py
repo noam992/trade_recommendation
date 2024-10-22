@@ -26,6 +26,7 @@ from email.mime.image import MIMEImage
 import socket
 import io
 import base64
+from email.header import Header
 
 
 ## bedrock area
@@ -41,6 +42,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 project_root = Path(__file__).parent
 load_dotenv(project_root / '.env')
+
+SYMBOLS = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 'NVDA', 'JPM', 'V', 'JNJ', 'WMT', 'PG', 'DIS', 'NFLX', 'ADBE']
 
 # Email parameters
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL_TRADE')
@@ -93,7 +96,7 @@ def get_response_from_bedrock(prompt):
 
 ## End of Bedrock area
 
-def create_one_prompt(recommendations, num_activities=10, all_symbols=[], start_date=None):
+def create_llm_prompt(recommendations, num_activities=10, all_symbols=[], start_date=None):
     
     prompt_manual = f"""
     Strategy Details:
@@ -232,20 +235,23 @@ def generate_recommendations(symbols, start_date, end_date):
         try:
             results, data, trades, equity_curve = backtest_strategy(symbol, start_date, end_date)
 
-            # daily_pct_returns = equity_curve['Equity'].pct_change().dropna()
-            # EntryTime = trades['EntryTime']
-            # ExitTime = trades['ExitTime']
-            # daily_equity = equity_curve['Equity']
-            # trade_equity = daily_equity.loc[EntryTime[0]:ExitTime[0]]
-            # duration = results['Duration'].days
-            # metrics = PerformanceMetrics(data, daily_pct_returns, daily_equity, trade_equity, duration)
-            # sharpe_ratio = metrics.calculate_sharpe_ratio()
-            # max_drawdown = metrics.calculate_max_drawdown()
-            # sortino_ratio = metrics.calculate_sortino_ratio()
+            # if symbol == 'NVDA':
+            #     daily_pct_returns = equity_curve['Equity'].pct_change().dropna()
+            #     EntryTime = trades['EntryTime']
+            #     ExitTime = trades['ExitTime']
+            #     daily_equity = equity_curve['Equity']
+            #     trade_equity = daily_equity.loc[EntryTime[0]:ExitTime[0]]
+            #     duration = results['Duration'].days
+            #     metrics = PerformanceMetrics(data, daily_pct_returns, daily_equity, trade_equity, duration)
+            #     sharpe_ratio = metrics.calculate_sharpe_ratio()
+            #     max_drawdown = metrics.calculate_max_drawdown()
+            #     sortino_ratio = metrics.calculate_sortino_ratio()
 
-            # print(f"{symbol} Sharpe Ratio: {sharpe_ratio:.3f}")
-            # print(f"{symbol} Max Drawdown: {max_drawdown:.3f}")
-            # print(f"{symbol} Sortino Ratio: {sortino_ratio:.3f}")
+            #     print('EntryTime: ', EntryTime)
+            #     print('ExitTime: ', ExitTime)
+            #     print(f"{symbol} Sharpe Ratio: {sharpe_ratio:.3f}")
+            #     print(f"{symbol} Max Drawdown: {max_drawdown:.3f}")
+            #     print(f"{symbol} Sortino Ratio: {sortino_ratio:.3f}")
 
             recommendations.append({
                 'symbol': symbol,
@@ -316,7 +322,7 @@ def plot_stock_indicators(data, symbol):
 
     return img_data, symbol
 
-def create_html_content(rcontent, start_date, symbols, recommendations):
+def create_html_content(bedrock_response, start_date, symbols, recommendations):
     html_content = f"""
     <html>
         <body dir="rtl" style="text-align: right;">
@@ -348,40 +354,47 @@ def create_html_content(rcontent, start_date, symbols, recommendations):
             </ul>
             </p>
 
-            {rcontent}
+            {bedrock_response}
 
             <p><strong>מצורפים גרפים של 3 המדדים עם התשואה הגבוהה ביותר</strong></p>
     """
 
     return html_content
 
-def send_email(remail, rsubject, rcontent, start_date, symbols, recommendations):
+def generate_stock_charts(recommendations):
+    # Extract top 3 symbols with highest Expected Return
+    top_3_symbols = sorted(recommendations, key=lambda x: x['return'], reverse=True)[:3]
+    
+    chart_data = []
+    for rec in top_3_symbols:
+        img_data, symbol = plot_stock_indicators(rec['data'], rec['symbol'])
+        chart_data.append((img_data, symbol))
+    
+    return chart_data
+
+def send_email(remail, subject, email_body, chart_data):
     msg = MIMEMultipart()
     msg['From'] = SENDER_EMAIL
     msg['To'] = ', '.join(remail)
-    msg['Subject'] = rsubject
 
-    # Create the HTML content
-    html_content = create_html_content(rcontent, start_date, symbols, recommendations)
+    # Set the subject only once, using Header for proper encoding
+    msg['Subject'] = Header(subject, 'utf-8')
 
-    # Attach the HTML content
-    msg.attach(MIMEText(html_content, 'html'))
+    # Attach the HTML content with proper encoding
+    msg.attach(MIMEText(email_body.encode('utf-8'), 'html', 'utf-8'))
 
-    # Extract top 3 symbols with highest Expected Return
-    top_3_symbols = sorted(recommendations, key=lambda x: x['return'], reverse=True)[:3]
-    top_3_symbols = [rec['symbol'] for rec in top_3_symbols]
-
-    # Generate and attach images for top 3 symbols
-    for symbol in top_3_symbols:
-        rec = next(r for r in recommendations if r['symbol'] == symbol)
-        img_data, symbol = plot_stock_indicators(rec['data'], symbol)
+    # Attach images
+    for img_data, symbol in chart_data:
         image = MIMEImage(img_data)
         image.add_header('Content-ID', f'<{symbol}_image>')
         image.add_header('Content-Disposition', 'inline', filename=f'{symbol}_chart.png')
         msg.attach(image)
 
         # Add image reference to HTML
-        html_content += f'<img src="cid:{symbol}_image" alt="{symbol} Stock Indicators"><br>'
+        email_body += f'<img src="cid:{symbol}_image" alt="{symbol} Stock Indicators"><br>'
+
+    # Update the email content with the image references
+    msg.get_payload()[0].set_payload(email_body.encode('utf-8'))
 
     try:
         with smtplib.SMTP(host='smtp.gmail.com', port=587) as smtp:     
@@ -389,29 +402,31 @@ def send_email(remail, rsubject, rcontent, start_date, symbols, recommendations)
             smtp.starttls() 
             smtp.login(SENDER_EMAIL, SENDER_PSWRD)
             smtp.send_message(msg)
-            print("Email sent to", remail)
-    except socket.gaierror as e:
-        print(f"Failed to connect to SMTP server: {e}")
-    except smtplib.SMTPAuthenticationError:
-        print("SMTP authentication failed. Please check your email and password.")
+            logger.info(f"Email sent to{remail}")
     except Exception as e:
         print(f"An error occurred while sending the email: {e}")
 
-def monthly_trading_suggestion(symbols, num_activities=10):
+def main(symbols, num_activities=10):
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=365)  # Use 1 year of historical data
+    start_date = end_date - timedelta(days=365)
     
+    logger.info(f"Generating stock recommendations from {start_date} to {end_date}")
     recommendations = generate_recommendations(symbols, start_date, end_date)
     
-    prompt = create_one_prompt(recommendations, num_activities=10, all_symbols=symbols, start_date=start_date)
+    logger.info(f"Creating prompt for Bedrock")
+    prompt = create_llm_prompt(recommendations, num_activities=10, all_symbols=symbols, start_date=start_date)
 
+    logger.info(f"Getting response from Bedrock")
     bedrock_response = get_response_from_bedrock(prompt)
     
+    logger.info(f"Creating email content")
+    email_body = create_html_content(bedrock_response, start_date, symbols, recommendations)
+
+    logger.info(f"Generating stock charts")
+    chart_data = generate_stock_charts(recommendations)
+
+    logger.info(f"Sending email")
     email_subject = "המלצות מסחר חודשיות"
-    email_body = f"{bedrock_response}"
+    send_email(EMAIL_RECIPIENTS, email_subject, email_body, chart_data)
 
-    send_email(EMAIL_RECIPIENTS, email_subject, email_body, start_date, symbols, recommendations)
-
-# Example usage
-symbols = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'FB', 'TSLA', 'NVDA', 'JPM', 'V', 'JNJ', 'WMT', 'PG', 'DIS', 'NFLX', 'ADBE']
-monthly_trading_suggestion(symbols)
+main(SYMBOLS)

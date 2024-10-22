@@ -6,7 +6,7 @@ from backtesting import Backtest, Strategy
 
 end_date = datetime.now()
 start_date = end_date - timedelta(days=365)  # Use 1 year of historical data
-symbols = ['NVDA']
+symbols = ['AAPL']
 
 data = yf.download(symbols, start=start_date, end=end_date)
 
