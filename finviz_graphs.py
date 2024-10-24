@@ -111,6 +111,53 @@ def close_popup_ad(driver):
     except Exception as e:
         logging.warning(f"No popup ad found or unable to close: {str(e)}")
 
+def get_chart_lines():
+    # Read the image
+    img = cv2.imread('ADEA_chart.png')
+    
+    # Convert BGR to HSV
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    
+    # Convert RGB color to HSV
+    rgb_color = np.uint8([[[37, 111, 149]]])  # RGB color
+    hsv_color = cv2.cvtColor(rgb_color, cv2.COLOR_RGB2HSV)
+    
+    # Get the HSV values
+    hue = hsv_color[0][0][0]
+    
+    # Define range of the color in HSV
+    lower_bound = np.array([max(0, hue - 10), 100, 100])
+    upper_bound = np.array([min(180, hue + 10), 255, 255])
+    
+    # Threshold the HSV image to get only the specified color
+    mask = cv2.inRange(hsv, lower_bound, upper_bound)
+    
+    # Bitwise-AND mask and original image
+    color_only = cv2.bitwise_and(img, img, mask=mask)
+    
+    # Convert to grayscale
+    gray = cv2.cvtColor(color_only, cv2.COLOR_BGR2GRAY)
+    
+    # Apply edge detection
+    edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+    
+    # Detect lines using HoughLinesP
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=50, maxLineGap=10)
+    
+    # Create a blank image to draw the lines on
+    line_image = np.zeros_like(img)
+    
+    # Draw the lines on the blank image
+    if lines is not None:
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            cv2.line(line_image, (x1, y1), (x2, y2), (37, 111, 149), 2)
+    
+    # Save the image with only the specified color lines
+    cv2.imwrite('ADEA_specific_color_lines.png', line_image)
+    
+    return line_image
+
 def scan_chart_image(ticker='ADEA'):
     # Set up Chrome options
     chrome_options = Options()
@@ -178,4 +225,4 @@ def main():
         logging.warning("No double bottom stocks found. Skipping CSV save and chart scan.")
 
 if __name__ == "__main__":
-    main()
+    get_chart_lines()
