@@ -74,7 +74,7 @@ def save_to_csv(df, filename='double_bottom_stocks.csv'):
     df.to_csv(filename, index=False)
     logging.info(f"Data saved to {filename}")
 
-def process_chart_image(driver, chart, ticker):
+def save_chart_img(driver, chart, ticker):
     logging.info(f"Processing chart image for {ticker}")
     try:
         # Find the canvas element within the chart
@@ -93,11 +93,14 @@ def process_chart_image(driver, chart, ticker):
 
         chart_image = screenshot.crop((left, top, right, bottom))
 
-        chart_image.save(f"{ticker}_chart.png")
+        img_path = f"{ticker}_chart.png"
+        chart_image.save(img_path)
 
-        return True
+        logging.info(f"Successfully saved chart image for {ticker}")
+        return img_path
+    
     except Exception as e:
-        logging.error(f"Error processing chart image: {str(e)}")
+        logging.error(f"Failed to process chart image for {ticker}. Error: {str(e)}")
         return False
 
 def close_popup_ad(driver):
@@ -171,7 +174,8 @@ def get_chart_lines(img_path: str, color_rgb: tuple[int, int, int]):
     
     return line_image
 
-def scan_chart_image(ticker='ADEA'):
+def scan_chart_image(ticker: str, color_rgb: tuple[int, int, int], radius: int):
+
     # Set up Chrome options
     chrome_options = Options()
     chrome_options.add_argument("--start-maximized")
@@ -188,88 +192,78 @@ def scan_chart_image(ticker='ADEA'):
 
     close_popup_ad(driver)
 
-    if process_chart_image(driver, chart, ticker):
-        logging.info(f"Successfully captured chart for {ticker}")
-    else:
-        logging.error(f"Failed to capture chart for {ticker}")
+    chart_img_path = save_chart_img(driver, chart, ticker)
 
     driver.quit()
 
-def get_blue_line_and_text(img_path: str, color_rgb: tuple[int, int, int], text_radius: int = 40):
-    # Read the image
-    img = cv2.imread(img_path)
-    
-    # Convert BGR to HSV
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    
-    # Convert RGB color to HSV
-    rgb_color = np.uint8([[color_rgb]])  # RGB color
-    hsv_color = cv2.cvtColor(rgb_color, cv2.COLOR_RGB2HSV)
-    
-    # Get the HSV values
-    hue = hsv_color[0][0][0]
-    
-    # Define range of the blue color in HSV
-    lower_bound = np.array([max(0, hue - 10), 100, 100])
-    upper_bound = np.array([min(180, hue + 10), 255, 255])
-    
-    # Threshold the HSV image to get only the blue color
-    mask = cv2.inRange(hsv, lower_bound, upper_bound)
-    
-    # Bitwise-AND mask and original image
-    blue_only = cv2.bitwise_and(img, img, mask=mask)
-    
-    # Convert to grayscale
-    gray = cv2.cvtColor(blue_only, cv2.COLOR_BGR2GRAY)
-    
-    # Apply edge detection
-    edges = cv2.Canny(gray, 50, 150, apertureSize=3)
-    
-    # Detect lines using HoughLinesP
-    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=50, maxLineGap=10)
-    
-    # Create a blank mask to draw the shape
-    shape_mask = np.zeros(img.shape[:2], dtype=np.uint8)
-    
-    if lines is not None:
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            # Draw a thick line on the mask
-            cv2.line(shape_mask, (x1, y1), (x2, y2), 255, thickness=text_radius*2)
-    
-    # Dilate the shape to create a more continuous area
-    kernel = np.ones((5,5), np.uint8)
-    shape_mask = cv2.dilate(shape_mask, kernel, iterations=2)
-    
-    # Apply the shape mask to the original image
-    result_image = cv2.bitwise_and(img, img, mask=shape_mask)
-    
-    # Draw the blue lines on top of the result image
-    if lines is not None:
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            cv2.line(result_image, (x1, y1), (x2, y2), color_rgb, 2)
-    
-    # Save the image with the blue line and surrounding text
-    cv2.imwrite('ADEA_blue_line_and_text.png', result_image)
-    extracted_text = "Text extraction not available (Tesseract OCR not installed)"
-    
-    im = Image.open("ADEA_blue_line_and_text.png")    
-    
+    focus_on_lines_img_path = save_img_using_shape_from_color_lines(ticker=ticker, img_path=chart_img_path, color_rgb=color_rgb, line_radius=radius)
+
+def save_img_using_shape_from_color_lines(ticker: str, img_path: str, color_rgb: tuple[int, int, int], line_radius: int):
+    logging.info(f"Starting save image based on lines")
     try:
-        pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-        # Use pytesseract to extract text from the result image
-        extracted_text = pytesseract.image_to_string(im, lang = 'eng')
-        logging.info(f"Extracted text: {extracted_text}")
-        if not extracted_text.strip():
-            logging.warning("No text found in the image.")
-            extracted_text = "No text found in the image."
-    except ImportError:
-        logging.warning("pytesseract is not installed. Text extraction will be skipped.")
-    except Exception as e:
-        logging.error(f"Error during text extraction: {str(e)}")
+        # Read the image
+        img = cv2.imread(img_path)
+        
+        # Convert BGR to HSV
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        
+        # Convert RGB color to HSV
+        rgb_color = np.uint8([[color_rgb]])  # RGB color
+        hsv_color = cv2.cvtColor(rgb_color, cv2.COLOR_RGB2HSV)
+        
+        # Get the HSV values
+        hue = hsv_color[0][0][0]
+        
+        # Define range of the blue color in HSV
+        lower_bound = np.array([max(0, hue - 10), 100, 100])
+        upper_bound = np.array([min(180, hue + 10), 255, 255])
+        
+        # Threshold the HSV image to get only the blue color
+        mask = cv2.inRange(hsv, lower_bound, upper_bound)
+        
+        # Bitwise-AND mask and original image
+        blue_only = cv2.bitwise_and(img, img, mask=mask)
+        
+        # Convert to grayscale
+        gray = cv2.cvtColor(blue_only, cv2.COLOR_BGR2GRAY)
+        
+        # Apply edge detection
+        edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+        
+        # Detect lines using HoughLinesP
+        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=50, maxLineGap=10)
+        
+        # Create a blank mask to draw the shape
+        shape_mask = np.zeros(img.shape[:2], dtype=np.uint8)
+        
+        if lines is not None:
+            for line in lines:
+                x1, y1, x2, y2 = line[0]
+                # Draw a thick line on the mask
+                cv2.line(shape_mask, (x1, y1), (x2, y2), 255, thickness=line_radius*2)
+        
+        # Dilate the shape to create a more continuous area
+        kernel = np.ones((5,5), np.uint8)
+        shape_mask = cv2.dilate(shape_mask, kernel, iterations=2)
+        
+        # Apply the shape mask to the original image
+        result_image = cv2.bitwise_and(img, img, mask=shape_mask)
+        
+        # Draw the blue lines on top of the result image
+        if lines is not None:
+            for line in lines:
+                x1, y1, x2, y2 = line[0]
+                cv2.line(result_image, (x1, y1), (x2, y2), color_rgb, 2)
+
+        # Save the image with the blue line and surrounding text
+        img_path = f"{ticker}_focus_on_lines.png"
+        cv2.imwrite(img_path, result_image)
+
+        logging.info("Successfully saved image based on lines")
+        return img_path
     
-    return result_image, extracted_text
+    except Exception as e:
+        logging.error(f"Failed to save image based on lines. Error: {str(e)}")
 
 def main():
     max_retries = 2
@@ -315,10 +309,6 @@ def main():
         logging.warning("No double bottom stocks found. Skipping CSV save and chart scan.")
 
 if __name__ == "__main__":
-
-    # scan_chart_image()
-    logging.info("Get blue line and surrounding text")
-    result_image, extracted_text = get_blue_line_and_text(img_path='ADEA_chart.png', color_rgb=(37, 111, 149), text_radius=50)
     
-    logging.info("Extracted text:")
-    print(extracted_text)
+    scan_chart_image(ticker='MYE', color_rgb=(37, 111, 149), radius=50)
+    # save_img_using_shape_from_color_lines(img_path='ADEA_chart.png', color_rgb=(37, 111, 149), text_radius=50)
