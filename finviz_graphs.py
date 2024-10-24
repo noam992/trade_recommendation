@@ -9,7 +9,11 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import logging
+from PIL import Image
+import io
 from datetime import datetime
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.chrome.options import Options
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
@@ -31,7 +35,7 @@ def get_double_bottom_stocks():
         table = soup.find('table', {'id': 'screener-content'})
 
     if table is None:
-        print("Could not find the table. The website structure might have changed.")
+        logging.info("Could not find the table. The website structure might have changed.")
         return pd.DataFrame()
 
     rows = table.find_all('tr')[1:]  # Skip the header row
@@ -67,49 +71,68 @@ def get_double_bottom_stocks():
 
 def save_to_csv(df, filename='double_bottom_stocks.csv'):
     df.to_csv(filename, index=False)
-    print(f"Data saved to {filename}")
+    logging.info(f"Data saved to {filename}")
+
+def process_chart_image(driver, chart, ticker):
+    logging.info(f"Processing chart image for {ticker}")
+    try:
+        # Find the canvas element within the chart
+        canvas = chart.find_element(By.CSS_SELECTOR, "canvas.second")
+
+        screenshot = driver.get_screenshot_as_png()
+        screenshot = Image.open(io.BytesIO(screenshot))
+
+        canvas_location = canvas.location
+        canvas_size = canvas.size
+
+        left = canvas_location['x']
+        top = canvas_location['y']
+        right = left + canvas_size['width']
+        bottom = top + canvas_size['height']
+
+        chart_image = screenshot.crop((left, top, right, bottom))
+
+        chart_image.save(f"{ticker}_chart.png")
+
+        return True
+    except Exception as e:
+        logging.error(f"Error processing chart image: {str(e)}")
+        return False
+
+def close_popup_ad(driver):
+    logging.info("Attempting to close popup ad")
+    try:
+        # Wait for the close button to be clickable
+        close_button = WebDriverWait(driver, 1).until(
+            EC.element_to_be_clickable((By.ID, "aymStickyFooterClose"))
+        )
+        close_button.click()
+        logging.info("Popup ad closed successfully")
+    except Exception as e:
+        logging.warning(f"No popup ad found or unable to close: {str(e)}")
 
 def scan_chart_image(ticker='ADEA'):
-    driver = webdriver.Chrome()  # Make sure you have chromedriver installed and in PATH
+    # Set up Chrome options
+    chrome_options = Options()
+    chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--ignore-certificate-errors")
+    chrome_options.add_argument("--ignore-ssl-errors")
+
+    # Initialize the Chrome driver with the options
+    driver = webdriver.Chrome(options=chrome_options)
     driver.get(f"https://finviz.com/quote.ashx?t={ticker}&ty=c&p=d&b=1")
 
-    # Wait for the chart to load and take a screenshot
-    chart = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "chart0")))
-    chart.screenshot(f"{ticker}_chart.png")
+    chart = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.ID, "chart")))
+
+    # Close popup ad
+    close_popup_ad(driver)
+
+    if process_chart_image(driver, chart, ticker):
+        logging.info(f"Successfully captured chart for {ticker}")
+    else:
+        logging.error(f"Failed to capture chart for {ticker}")
+
     driver.quit()
-
-    # Process the image
-    image = cv2.imread(f"{ticker}_chart.png")
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-
-    # Define range for purple color in HSV
-    lower_purple = np.array([130, 50, 50])
-    upper_purple = np.array([170, 255, 255])
-
-    # Create a mask for purple color
-    mask = cv2.inRange(hsv, lower_purple, upper_purple)
-
-    # Edge detection
-    edges = cv2.Canny(mask, 50, 150, apertureSize=3)
-
-    # Hough Line Transform
-    lines = cv2.HoughLines(edges, 1, np.pi/180, 200)
-
-    # Draw lines on the original image
-    if lines is not None:
-        for rho, theta in lines[:, 0]:
-            a = np.cos(theta)
-            b = np.sin(theta)
-            x0 = a * rho
-            y0 = b * rho
-            x1 = int(x0 + 1000 * (-b))
-            y1 = int(y0 + 1000 * (a))
-            x2 = int(x0 - 1000 * (-b))
-            y2 = int(y0 - 1000 * (a))
-            cv2.line(image, (x1, y1), (x2, y2), (0, 0, 255), 2)
-
-    cv2.imwrite(f"{ticker}_chart_with_lines.png", image)
-    print(f"Processed chart saved as {ticker}_chart_with_lines.png")
 
 def main():
     max_retries = 2
@@ -122,7 +145,6 @@ def main():
             double_bottom_stocks = get_double_bottom_stocks()
             if not double_bottom_stocks.empty:
                 logging.info("Successfully retrieved double bottom stocks")
-                print(double_bottom_stocks)
                 break
         except Exception as e:
             logging.error(f"Attempt {attempt + 1} failed to get double bottom stocks. Error: {str(e)}")
