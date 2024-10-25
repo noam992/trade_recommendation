@@ -15,9 +15,30 @@ from datetime import datetime
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.chrome.options import Options
 import pytesseract
+import re
+
+import matplotlib.pyplot as plt
+
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+
+html_tags = {
+    'theme_tag': {
+        'tagDataTestID': 'a[data-testid="chart-layout-theme"]',
+        'WebDriverWait': 2
+    },
+    'close_popup_tag': {
+        'tagID': 'aymStickyFooterClose',
+        'sleep_before': 3,
+        'WebDriverWait': 3
+    },
+    'chart_tag': {
+        'tag': 'canvas',
+        'sleep_before': 5,
+        'WebDriverWait': 5
+    }
+}
 
 def get_double_bottom_stocks():
     url = "https://finviz.com/screener.ashx?v=111&f=ta_pattern_doublebottom"
@@ -74,11 +95,14 @@ def save_to_csv(df, filename='double_bottom_stocks.csv'):
     df.to_csv(filename, index=False)
     logging.info(f"Data saved to {filename}")
 
-def save_chart_img(driver, chart, ticker):
+def save_chart_img(driver, ticker):
     logging.info(f"Processing chart image for {ticker}")
     try:
-        # Find the canvas element within the chart
-        canvas = chart.find_element(By.CSS_SELECTOR, "canvas.second")
+        time.sleep(html_tags['chart_tag']['sleep_before'])
+        # Find the first canvas element within the chart
+        canvas = WebDriverWait(driver, html_tags['chart_tag']['WebDriverWait']).until(
+            EC.presence_of_element_located((By.TAG_NAME, html_tags['chart_tag']['tag']))
+        )
 
         screenshot = driver.get_screenshot_as_png()
         screenshot = Image.open(io.BytesIO(screenshot))
@@ -106,11 +130,10 @@ def save_chart_img(driver, chart, ticker):
 def close_popup_ad(driver):
     logging.info("Attempting to close popup ad")
     try:
-        # Wait for the close button to be clickable
-        close_button = WebDriverWait(driver, 1).until(
-            EC.element_to_be_clickable((By.ID, "aymStickyFooterClose"))
-        )
+        time.sleep(html_tags['close_popup_tag']['sleep_before'])
+        close_button = WebDriverWait(driver, html_tags['close_popup_tag']['WebDriverWait']).until( EC.element_to_be_clickable((By.ID, html_tags['close_popup_tag']['tagID'])) )
         close_button.click()
+
         logging.info("Popup ad closed successfully")
     except Exception as e:
         logging.warning(f"No popup ad found or unable to close: {str(e)}")
@@ -118,11 +141,10 @@ def close_popup_ad(driver):
 def apply_white_theme(driver):
     logging.info("Attempting to apply white theme")
     try:
-        theme_button = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, 'a[data-testid="chart-layout-theme"]'))
+        theme_button = WebDriverWait(driver, html_tags['theme_tag']['WebDriverWait']).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, html_tags['theme_tag']['tagDataTestID']))
         )
         theme_button.click()
-        time.sleep(2)
         logging.info("White theme applied successfully")
     except Exception as e:
         logging.error(f"Unable to apply white theme: {str(e)}")
@@ -174,29 +196,33 @@ def get_chart_lines(img_path: str, color_rgb: tuple[int, int, int]):
     
     return line_image
 
-def scan_chart_image(ticker: str, color_rgb: tuple[int, int, int], radius: int):
-
-    # Set up Chrome options
+def scan_chart_image(ticker: str):
+    logging.info(f"Starting chart scan for {ticker}")
     chrome_options = Options()
     chrome_options.add_argument("--start-maximized")
     chrome_options.add_argument("--ignore-certificate-errors")
     chrome_options.add_argument("--ignore-ssl-errors")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
 
-    # Initialize the Chrome driver with the options
-    driver = webdriver.Chrome(options=chrome_options)
-    driver.get(f"https://finviz.com/quote.ashx?t={ticker}&ty=c&p=d&b=1")
+    driver = None
+    try:
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.get(f"https://finviz.com/quote.ashx?t={ticker}&ty=c&p=d&b=1")
 
-    apply_white_theme(driver)
+        apply_white_theme(driver)
+        close_popup_ad(driver)
 
-    chart = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.ID, "chart")))
+        chart_img_path = save_chart_img(driver, ticker)
+        logging.info(f"Chart image saved for {ticker} at {chart_img_path}")
+        return chart_img_path
 
-    close_popup_ad(driver)
-
-    chart_img_path = save_chart_img(driver, chart, ticker)
-
-    driver.quit()
-
-    focus_on_lines_img_path = save_img_using_shape_from_color_lines(ticker=ticker, img_path=chart_img_path, color_rgb=color_rgb, line_radius=radius)
+    except Exception as e:
+        logging.error(f"Error processing chart for {ticker}: {str(e)}")
+        return None
+    finally:
+        if driver:
+            driver.quit()
 
 def save_img_using_shape_from_color_lines(ticker: str, img_path: str, color_rgb: tuple[int, int, int], line_radius: int):
     logging.info(f"Starting save image based on lines")
@@ -254,6 +280,10 @@ def save_img_using_shape_from_color_lines(ticker: str, img_path: str, color_rgb:
             for line in lines:
                 x1, y1, x2, y2 = line[0]
                 cv2.line(result_image, (x1, y1), (x2, y2), color_rgb, 2)
+                
+                vertical_line_color = (0, 0, 255)
+                # Add a definite sign (red vertical line) on the right side of blue lines
+                cv2.line(result_image, (x2, 0), (x2, result_image.shape[0]), vertical_line_color, 2)
 
         # Save the image with the blue line and surrounding text
         img_path = f"{ticker}_focus_on_lines.png"
@@ -264,6 +294,186 @@ def save_img_using_shape_from_color_lines(ticker: str, img_path: str, color_rgb:
     
     except Exception as e:
         logging.error(f"Failed to save image based on lines. Error: {str(e)}")
+        return None
+
+def paint_red_line_white_space(ticker: str, img_path: str, rad_rgb: tuple):
+    try:
+        # Read the image
+        img = cv2.imread(img_path)
+        
+        # Convert to grayscale
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        # Get image dimensions
+        height, width = gray.shape
+        
+        # Scan the image from top to bottom
+        for y in range(height):
+            row = gray[y]
+            if np.all(row > 200):  # Assuming white space has pixel values > 200
+                # Draw a red horizontal line
+                cv2.line(img, (0, y), (width, y), (0, 0, 255), 1)
+        
+        # Save the modified image
+        output_path = f"{ticker}_red_lines_on_whitespace.png"
+        cv2.imwrite(output_path, img)
+        
+        logging.info(f"Successfully painted red lines on whitespace for {ticker}")
+        return output_path
+    
+    except Exception as e:
+        logging.error(f"Failed to paint red lines on whitespace for {ticker}. Error: {str(e)}")
+        return None
+
+def get_numbers_from_image(img_path: str) -> list:
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+    
+    img = cv2.imread(img_path)
+    
+    # Convert to grayscale
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # Apply Gaussian blur to reduce noise
+    blurred = cv2.GaussianBlur(gray, (1, 1), 0)
+
+    # Apply adaptive thresholding
+    thresholded = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                        cv2.THRESH_BINARY, 11, 2)
+
+    # Apply sharpening filter
+    kernel = np.array([[0, -1, 0],
+                       [-1, 5, -1],
+                       [0, -1, 0]])
+    sharpened = cv2.filter2D(thresholded, -1, kernel)
+
+    # Add white margin space around the sharpened image
+    margin = 5  # Adjust this value to increase or decrease the margin size
+    height, width = sharpened.shape
+    white_background = np.ones((height + 2*margin, width + 2*margin), dtype=np.uint8) * 255
+    white_background[margin:margin+height, margin:margin+width] = sharpened
+    
+    # Update sharpened with the new image that includes white margins
+    sharpened = white_background
+
+    threshold_img_path = img_path.replace('.png', '_threshold.png')
+    cv2.imwrite(threshold_img_path, sharpened)
+
+    numbers = pytesseract.image_to_string(sharpened)
+    
+    return numbers
+
+def save_imgs_using_croping(ticker: str, img_path: str, vertical_line_color: tuple):
+    logging.info(f"Starting save_imgs_using_croping for {ticker}")
+    
+    # Load the image
+    img = cv2.imread(img_path)
+    
+    # Find the x-coordinate of the vertical line
+    height, width = img.shape[:2]
+    for x in range(width):
+        if np.all(img[:, x] == vertical_line_color):
+            break
+    
+    # Crop the image from just after the vertical line to the right
+    cropped_img = img[:, x+5:]
+    
+    # Save the cropped image
+    cropped_img_path = img_path.replace('.png', '_cropped.png')
+    cv2.imwrite(cropped_img_path, cropped_img)
+    
+    logging.info(f"Finished save_imgs_using_croping for {ticker}")
+    return cropped_img_path
+
+def crop_img_using_red_line(ticker: str, img_path: str, rad_rgb: tuple, is_vertical_scan: bool):
+    logging.info(f"Starting crop_img_using_red_line for {ticker}")
+    
+    # Load the image
+    img = cv2.imread(img_path)
+    if img is None:
+        logging.error(f"Failed to load image: {img_path}")
+        return 0
+
+    height, width = img.shape[:2]
+    
+    # Function to check if a pixel is red (within a tolerance)
+    def is_red(pixel):
+        return np.all(np.abs(pixel - rad_rgb) < 10)
+    
+    # Initialize variables
+    crop_start = 0
+    crop_count = 0
+    red_lines_found = False
+    
+    if is_vertical_scan:
+        # Scan from top to bottom
+        for y in range(height):
+            if any(is_red(img[y, x]) for x in range(width)):
+                red_lines_found = True
+                if crop_start < y:
+                    # Crop and save the image
+                    cropped = img[crop_start:y, :]
+                    if not cropped.size == 0:
+                        cv2.imwrite(f"{ticker}_crop_{crop_count}.png", cropped)
+                        crop_count += 1
+                    else:
+                        logging.warning(f"Skipped empty crop at y={y}")
+                crop_start = y + 1
+    else:
+        # Scan from left to right
+        for x in range(width):
+            if any(is_red(img[y, x]) for y in range(height)):
+                red_lines_found = True
+                if crop_start < x:
+                    # Crop and save the image
+                    cropped = img[:, crop_start:x]
+                    if not cropped.size == 0:
+                        cv2.imwrite(f"{ticker}_crop_{crop_count}.png", cropped)
+                        crop_count += 1
+                    else:
+                        logging.warning(f"Skipped empty crop at x={x}")
+                crop_start = x + 1
+    
+    # Save the last crop
+    if is_vertical_scan:
+        last_crop = img[crop_start:, :]
+    else:
+        last_crop = img[:, crop_start:]
+    
+    if not last_crop.size == 0:
+        cv2.imwrite(f"{ticker}_crop_{crop_count}.png", last_crop)
+        crop_count += 1
+    else:
+        logging.warning("Skipped empty last crop")
+    
+    if not red_lines_found:
+        logging.warning("No red lines found in the image")
+    
+    logging.info(f"Finished crop_img_using_red_line for {ticker}. Created {crop_count} crops.")
+    return crop_count  # Return the number of crops created
+
+def cover_white_on_black(img_path: str, black_rgb: tuple, white_rgb: tuple):
+    logging.info(f"Starting cover_white_on_black for image: {img_path}")
+    
+    # Load the image
+    img = cv2.imread(img_path)
+    height, width = img.shape[:2]
+    
+    # Function to check if a pixel is black (within a tolerance)
+    def is_black(pixel):
+        return np.all(np.abs(pixel - black_rgb) < 70)
+    
+    # Scan the image for black pixels
+    for y in range(height):
+        if any(is_black(img[y, x]) for x in range(width)):
+            # Draw a horizontal white line
+            cv2.line(img, (0, y), (width, y), white_rgb, 1)
+    
+    # Save the modified image
+    output_path = img_path.replace('.png', '_covered.png')
+    cv2.imwrite(output_path, img)
+    
+    logging.info(f"Finished cover_white_on_black. Output saved to: {output_path}")
+    return output_path
 
 def main():
     max_retries = 2
@@ -295,9 +505,10 @@ def main():
         for attempt in range(max_retries):
             try:
                 logging.info(f"Attempting to scan chart image for {first_ticker}")
-                scan_chart_image(first_ticker)
-                logging.info(f"Successfully scanned chart image for {first_ticker}")
-                break
+                focus_on_lines_img_path = scan_chart_image(first_ticker, color_rgb=(37, 111, 149), radius=50)
+                if focus_on_lines_img_path:
+                    logging.info(f"Successfully scanned chart image for {first_ticker}")
+                    break
             except Exception as e:
                 logging.error(f"Attempt {attempt + 1} failed to scan chart image. Error: {str(e)}")
                 if attempt < max_retries - 1:
@@ -310,5 +521,27 @@ def main():
 
 if __name__ == "__main__":
     
-    scan_chart_image(ticker='MYE', color_rgb=(37, 111, 149), radius=50)
-    # save_img_using_shape_from_color_lines(img_path='ADEA_chart.png', color_rgb=(37, 111, 149), text_radius=50)
+    ticker = 'GO'
+
+    chart_img_path = scan_chart_image(ticker=ticker)
+    # chart_img_path = f'{ticker}_chart.png'
+
+    focus_on_lines_img_path = save_img_using_shape_from_color_lines(ticker=ticker, img_path=chart_img_path, color_rgb=(37, 111, 149), line_radius=60)
+
+    vertical_cropped_img_path = save_imgs_using_croping(ticker=ticker, img_path=focus_on_lines_img_path, vertical_line_color=(0, 0, 255))
+
+    covered_img_path = cover_white_on_black(img_path=vertical_cropped_img_path, black_rgb=(0, 0, 0), white_rgb=(255, 255, 255))
+
+    painted_img_path = paint_red_line_white_space(ticker=ticker, img_path=covered_img_path, rad_rgb=(0, 0, 255))
+    
+    number_of_croppd = crop_img_using_red_line(ticker=ticker, img_path=painted_img_path, rad_rgb=(0, 0, 255), is_vertical_scan=True)
+
+    count = number_of_croppd
+    print(f"Count: {count}")
+    for i in range(count):
+
+        print(f"Processing crop {i}")
+        img_path = f'{ticker}_crop_{i}.png'
+        numbers = get_numbers_from_image(img_path)
+        print(f"Numbers found in the image: {numbers}")
+
