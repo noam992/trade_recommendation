@@ -368,13 +368,13 @@ def save_imgs_using_croping(ticker: str, img_path: str, vertical_line_color: tup
     # Load the image
     img = cv2.imread(img_path)
     
-    # Find the x-coordinate of the vertical line
+    # Find the x-coordinate of the vertical line from right
     height, width = img.shape[:2]
-    for x in range(width):
+    for x in range(width - 1, -1, -1):
         if np.all(img[:, x] == vertical_line_color):
             break
     
-    # Crop the image from just after the vertical line to the right
+    # Crop the image from the left edge to just before the vertical line
     cropped_img = img[:, x+5:]
     
     # Save the cropped image
@@ -451,8 +451,8 @@ def crop_img_using_red_line(ticker: str, img_path: str, rad_rgb: tuple, is_verti
     logging.info(f"Finished crop_img_using_red_line for {ticker}. Created {crop_count} crops.")
     return crop_count  # Return the number of crops created
 
-def cover_white_on_black(img_path: str, black_rgb: tuple, white_rgb: tuple):
-    logging.info(f"Starting cover_white_on_black for image: {img_path}")
+def cover_vertical_rgb_lines_when_rgb_pixel_found(img_path: str, found_pixel_rgb: tuple, covered_line_rgb: tuple):
+    logging.info(f"Starting cover_vertical_rgb_lines_when_rgb_pixel_found for image: {img_path}")
     
     # Load the image
     img = cv2.imread(img_path)
@@ -460,88 +460,59 @@ def cover_white_on_black(img_path: str, black_rgb: tuple, white_rgb: tuple):
     
     # Function to check if a pixel is black (within a tolerance)
     def is_black(pixel):
-        return np.all(np.abs(pixel - black_rgb) < 70)
+        return np.all(np.abs(pixel - found_pixel_rgb) < 70)
     
     # Scan the image for black pixels
     for y in range(height):
         if any(is_black(img[y, x]) for x in range(width)):
             # Draw a horizontal white line
-            cv2.line(img, (0, y), (width, y), white_rgb, 1)
+            cv2.line(img, (0, y), (width, y), covered_line_rgb, 1)
     
     # Save the modified image
     output_path = img_path.replace('.png', '_covered.png')
     cv2.imwrite(output_path, img)
     
-    logging.info(f"Finished cover_white_on_black. Output saved to: {output_path}")
+    logging.info(f"Finished cover_vertical_rgb_lines_when_rgb_pixel_found. Output saved to: {output_path}")
     return output_path
 
 def main():
-    max_retries = 2
     double_bottom_stocks = pd.DataFrame()
 
-    # Retry loop for get_double_bottom_stocks
-    for attempt in range(max_retries):
-        try:
-            logging.info("Attempting to get double bottom stocks")
-            double_bottom_stocks = get_double_bottom_stocks()
-            if not double_bottom_stocks.empty:
-                logging.info("Successfully retrieved double bottom stocks")
-                break
-        except Exception as e:
-            logging.error(f"Attempt {attempt + 1} failed to get double bottom stocks. Error: {str(e)}")
-            if attempt < max_retries - 1:
-                logging.info("Retrying in 5 seconds...")
-                time.sleep(5)
-            else:
-                logging.error("Max retries reached. Unable to fetch double bottom stocks data.")
+    logging.info("Attempting to get double bottom stocks")
+    double_bottom_stocks = get_double_bottom_stocks()
 
     if not double_bottom_stocks.empty:
-        logging.info("Saving data to CSV")
-        save_to_csv(double_bottom_stocks)
+        logging.info("Successfully retrieved double bottom stocks")
+
+    logging.info("Saving data to CSV")
+    save_to_csv(double_bottom_stocks)
+
+    first_ticker = double_bottom_stocks['Ticker'].iloc[0]
+
+    if first_ticker:
+        folder = f'{first_ticker}_assets'
+
+        chart_img_path = scan_chart_image(ticker=first_ticker)
+        # chart_img_path = f'{ticker}_chart.png'
+
+        focus_on_lines_img_path = save_img_using_shape_from_color_lines(ticker=first_ticker, img_path=chart_img_path, color_rgb=(37, 111, 149), line_radius=60)
+
+        vertical_cropped_img_path = save_imgs_using_croping(ticker=first_ticker, img_path=focus_on_lines_img_path, vertical_line_color=(0, 0, 255))
+
+        covered_on_black_img_path = cover_vertical_rgb_lines_when_rgb_pixel_found(img_path=vertical_cropped_img_path, found_pixel_rgb=(0, 0, 0), covered_line_rgb=(255, 255, 255))
+
+        painted_img_path = paint_red_line_white_space(ticker=first_ticker, img_path=covered_on_black_img_path, rad_rgb=(0, 0, 255))
         
-        first_ticker = double_bottom_stocks['Ticker'].iloc[0]
-        
-        # Retry loop for scan_chart_image
-        for attempt in range(max_retries):
-            try:
-                logging.info(f"Attempting to scan chart image for {first_ticker}")
-                focus_on_lines_img_path = scan_chart_image(first_ticker, color_rgb=(37, 111, 149), radius=50)
-                if focus_on_lines_img_path:
-                    logging.info(f"Successfully scanned chart image for {first_ticker}")
-                    break
-            except Exception as e:
-                logging.error(f"Attempt {attempt + 1} failed to scan chart image. Error: {str(e)}")
-                if attempt < max_retries - 1:
-                    logging.info("Retrying in 5 seconds...")
-                    time.sleep(5)
-                else:
-                    logging.error("Max retries reached. Unable to scan chart image.")
-    else:
-        logging.warning("No double bottom stocks found. Skipping CSV save and chart scan.")
+        number_of_cropped = crop_img_using_red_line(ticker=first_ticker, img_path=painted_img_path, rad_rgb=(0, 0, 255), is_vertical_scan=True)
+
+        for i in range(number_of_cropped):
+
+            print(f"Processing crop {i}")
+            img_path = f'{first_ticker}_crop_{i}.png'
+            numbers = get_numbers_from_image(img_path)
+            print(f"Numbers found in the image: {numbers}")
+
 
 if __name__ == "__main__":
-    
-    ticker = 'GO'
-
-    chart_img_path = scan_chart_image(ticker=ticker)
-    # chart_img_path = f'{ticker}_chart.png'
-
-    focus_on_lines_img_path = save_img_using_shape_from_color_lines(ticker=ticker, img_path=chart_img_path, color_rgb=(37, 111, 149), line_radius=60)
-
-    vertical_cropped_img_path = save_imgs_using_croping(ticker=ticker, img_path=focus_on_lines_img_path, vertical_line_color=(0, 0, 255))
-
-    covered_img_path = cover_white_on_black(img_path=vertical_cropped_img_path, black_rgb=(0, 0, 0), white_rgb=(255, 255, 255))
-
-    painted_img_path = paint_red_line_white_space(ticker=ticker, img_path=covered_img_path, rad_rgb=(0, 0, 255))
-    
-    number_of_croppd = crop_img_using_red_line(ticker=ticker, img_path=painted_img_path, rad_rgb=(0, 0, 255), is_vertical_scan=True)
-
-    count = number_of_croppd
-    print(f"Count: {count}")
-    for i in range(count):
-
-        print(f"Processing crop {i}")
-        img_path = f'{ticker}_crop_{i}.png'
-        numbers = get_numbers_from_image(img_path)
-        print(f"Numbers found in the image: {numbers}")
+    main()
 
