@@ -16,6 +16,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.chrome.options import Options
 import pytesseract
 import re
+import os
 
 import matplotlib.pyplot as plt
 
@@ -40,62 +41,8 @@ html_tags = {
     }
 }
 
-def get_double_bottom_stocks():
-    url = "https://finviz.com/screener.ashx?v=111&f=ta_pattern_doublebottom"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
 
-    response = requests.get(url, headers=headers)
-    soup = BeautifulSoup(response.content, 'html.parser')
-
-    # Try to find the table with different class names
-    table = soup.find('table', class_='table-light')
-    if table is None:
-        table = soup.find('table', class_='screener_table')
-    if table is None:
-        table = soup.find('table', {'id': 'screener-content'})
-
-    if table is None:
-        logging.info("Could not find the table. The website structure might have changed.")
-        return pd.DataFrame()
-
-    rows = table.find_all('tr')[1:]  # Skip the header row
-
-    data = []
-    for row in rows:
-        cols = row.find_all('td')
-        if len(cols) > 10:
-            ticker = cols[1].text.strip()
-            company = cols[2].text.strip()
-            sector = cols[3].text.strip()
-            industry = cols[4].text.strip()
-            country = cols[5].text.strip()
-            market_cap = cols[6].text.strip()
-            price = cols[8].text.strip()
-            change = cols[9].text.strip()
-            volume = cols[10].text.strip()
-
-            data.append({
-                'Ticker': ticker,
-                'Company': company,
-                'Sector': sector,
-                'Industry': industry,
-                'Country': country,
-                'Market Cap': market_cap,
-                'Price': price,
-                'Change': change,
-                'Volume': volume
-            })
-
-    df = pd.DataFrame(data)
-    return df
-
-def save_to_csv(df, filename='double_bottom_stocks.csv'):
-    df.to_csv(filename, index=False)
-    logging.info(f"Data saved to {filename}")
-
-def save_chart_img(driver, ticker):
+def save_chart_img(driver, ticker, image_folder: str):
     logging.info(f"Processing chart image for {ticker}")
     try:
         time.sleep(html_tags['chart_tag']['sleep_before'])
@@ -117,7 +64,7 @@ def save_chart_img(driver, ticker):
 
         chart_image = screenshot.crop((left, top, right, bottom))
 
-        img_path = f"{ticker}_chart.png"
+        img_path = f"{image_folder}/{ticker}_chart.png"
         chart_image.save(img_path)
 
         logging.info(f"Successfully saved chart image for {ticker}")
@@ -126,6 +73,7 @@ def save_chart_img(driver, ticker):
     except Exception as e:
         logging.error(f"Failed to process chart image for {ticker}. Error: {str(e)}")
         return False
+
 
 def close_popup_ad(driver):
     logging.info("Attempting to close popup ad")
@@ -138,6 +86,7 @@ def close_popup_ad(driver):
     except Exception as e:
         logging.warning(f"No popup ad found or unable to close: {str(e)}")
 
+
 def apply_white_theme(driver):
     logging.info("Attempting to apply white theme")
     try:
@@ -148,6 +97,7 @@ def apply_white_theme(driver):
         logging.info("White theme applied successfully")
     except Exception as e:
         logging.error(f"Unable to apply white theme: {str(e)}")
+
 
 def get_chart_lines(img_path: str, color_rgb: tuple[int, int, int]):
     # Read the image
@@ -196,7 +146,8 @@ def get_chart_lines(img_path: str, color_rgb: tuple[int, int, int]):
     
     return line_image
 
-def scan_chart_image(ticker: str):
+
+def scan_chart_image(ticker: str, image_folder: str):
     logging.info(f"Starting chart scan for {ticker}")
     chrome_options = Options()
     chrome_options.add_argument("--start-maximized")
@@ -213,7 +164,7 @@ def scan_chart_image(ticker: str):
         apply_white_theme(driver)
         close_popup_ad(driver)
 
-        chart_img_path = save_chart_img(driver, ticker)
+        chart_img_path = save_chart_img(driver, ticker, image_folder)
         logging.info(f"Chart image saved for {ticker} at {chart_img_path}")
         return chart_img_path
 
@@ -223,6 +174,7 @@ def scan_chart_image(ticker: str):
     finally:
         if driver:
             driver.quit()
+
 
 def save_img_using_shape_from_color_lines(ticker: str, img_path: str, color_rgb: tuple[int, int, int], line_radius: int):
     logging.info(f"Starting save image based on lines")
@@ -286,15 +238,16 @@ def save_img_using_shape_from_color_lines(ticker: str, img_path: str, color_rgb:
                 cv2.line(result_image, (x2, 0), (x2, result_image.shape[0]), vertical_line_color, 2)
 
         # Save the image with the blue line and surrounding text
-        img_path = f"{ticker}_focus_on_lines.png"
-        cv2.imwrite(img_path, result_image)
+        focused_lines_path = img_path.replace('.png', '_focused_lines.png')
+        cv2.imwrite(focused_lines_path, result_image)
 
         logging.info("Successfully saved image based on lines")
-        return img_path
+        return focused_lines_path
     
     except Exception as e:
         logging.error(f"Failed to save image based on lines. Error: {str(e)}")
         return None
+
 
 def paint_red_line_white_space(ticker: str, img_path: str, rad_rgb: tuple):
     try:
@@ -315,17 +268,20 @@ def paint_red_line_white_space(ticker: str, img_path: str, rad_rgb: tuple):
                 cv2.line(img, (0, y), (width, y), (0, 0, 255), 1)
         
         # Save the modified image
-        output_path = f"{ticker}_red_lines_on_whitespace.png"
-        cv2.imwrite(output_path, img)
+        red_lines_on_whitespace_path = img_path.replace('.png', '_red_lines_on_whitespace.png')
+        cv2.imwrite(red_lines_on_whitespace_path, img)
         
         logging.info(f"Successfully painted red lines on whitespace for {ticker}")
-        return output_path
+        return red_lines_on_whitespace_path
     
     except Exception as e:
         logging.error(f"Failed to paint red lines on whitespace for {ticker}. Error: {str(e)}")
         return None
 
+
 def get_numbers_from_image(img_path: str) -> list:
+    logging.info(f"Reading number for img path: {img_path}")
+    
     pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
     
     img = cv2.imread(img_path)
@@ -360,7 +316,9 @@ def get_numbers_from_image(img_path: str) -> list:
 
     numbers = pytesseract.image_to_string(sharpened)
     
+    logging.info(f"Finished get_numbers_from_image for {img_path}")
     return numbers
+
 
 def save_imgs_using_croping(ticker: str, img_path: str, vertical_line_color: tuple):
     logging.info(f"Starting save_imgs_using_croping for {ticker}")
@@ -384,6 +342,7 @@ def save_imgs_using_croping(ticker: str, img_path: str, vertical_line_color: tup
     logging.info(f"Finished save_imgs_using_croping for {ticker}")
     return cropped_img_path
 
+
 def crop_img_using_red_line(ticker: str, img_path: str, rad_rgb: tuple, is_vertical_scan: bool):
     logging.info(f"Starting crop_img_using_red_line for {ticker}")
     
@@ -391,7 +350,7 @@ def crop_img_using_red_line(ticker: str, img_path: str, rad_rgb: tuple, is_verti
     img = cv2.imread(img_path)
     if img is None:
         logging.error(f"Failed to load image: {img_path}")
-        return 0
+        return []
 
     height, width = img.shape[:2]
     
@@ -401,7 +360,7 @@ def crop_img_using_red_line(ticker: str, img_path: str, rad_rgb: tuple, is_verti
     
     # Initialize variables
     crop_start = 0
-    crop_count = 0
+    extracted_paths = []
     red_lines_found = False
     
     if is_vertical_scan:
@@ -413,8 +372,9 @@ def crop_img_using_red_line(ticker: str, img_path: str, rad_rgb: tuple, is_verti
                     # Crop and save the image
                     cropped = img[crop_start:y, :]
                     if not cropped.size == 0:
-                        cv2.imwrite(f"{ticker}_crop_{crop_count}.png", cropped)
-                        crop_count += 1
+                        extracted_img_path = img_path.replace('.png', f'_extracted_num_{len(extracted_paths)}.png')
+                        cv2.imwrite(extracted_img_path, cropped)
+                        extracted_paths.append(extracted_img_path)
                     else:
                         logging.warning(f"Skipped empty crop at y={y}")
                 crop_start = y + 1
@@ -427,8 +387,9 @@ def crop_img_using_red_line(ticker: str, img_path: str, rad_rgb: tuple, is_verti
                     # Crop and save the image
                     cropped = img[:, crop_start:x]
                     if not cropped.size == 0:
-                        cv2.imwrite(f"{ticker}_crop_{crop_count}.png", cropped)
-                        crop_count += 1
+                        extracted_img_path = img_path.replace('.png', f'_extracted_num_{len(extracted_paths)}.png')
+                        cv2.imwrite(extracted_img_path, cropped)
+                        extracted_paths.append(extracted_img_path)
                     else:
                         logging.warning(f"Skipped empty crop at x={x}")
                 crop_start = x + 1
@@ -440,16 +401,18 @@ def crop_img_using_red_line(ticker: str, img_path: str, rad_rgb: tuple, is_verti
         last_crop = img[:, crop_start:]
     
     if not last_crop.size == 0:
-        cv2.imwrite(f"{ticker}_crop_{crop_count}.png", last_crop)
-        crop_count += 1
+        extracted_img_path = img_path.replace('.png', f'_extracted_num_{len(extracted_paths)}.png')
+        cv2.imwrite(extracted_img_path, last_crop)
+        extracted_paths.append(extracted_img_path)
     else:
         logging.warning("Skipped empty last crop")
     
     if not red_lines_found:
         logging.warning("No red lines found in the image")
     
-    logging.info(f"Finished crop_img_using_red_line for {ticker}. Created {crop_count} crops.")
-    return crop_count  # Return the number of crops created
+    logging.info(f"Finished crop_img_using_red_line for {ticker}. Created {len(extracted_paths)} crops.")
+    return extracted_paths
+
 
 def cover_vertical_rgb_lines_when_rgb_pixel_found(img_path: str, found_pixel_rgb: tuple, covered_line_rgb: tuple):
     logging.info(f"Starting cover_vertical_rgb_lines_when_rgb_pixel_found for image: {img_path}")
@@ -475,27 +438,32 @@ def cover_vertical_rgb_lines_when_rgb_pixel_found(img_path: str, found_pixel_rgb
     logging.info(f"Finished cover_vertical_rgb_lines_when_rgb_pixel_found. Output saved to: {output_path}")
     return output_path
 
-def main():
-    double_bottom_stocks = pd.DataFrame()
 
-    logging.info("Attempting to get double bottom stocks")
-    double_bottom_stocks = get_double_bottom_stocks()
+def read_stocks_from_csv(filename: str) -> pd.DataFrame:
+    try:
+        stocks_df = pd.read_csv(filename)
+        logging.info(f"Successfully read data from {filename}")
+        return stocks_df
+    except Exception as e:
+        logging.error(f"Error reading CSV file {filename}: {str(e)}")
+        return pd.DataFrame()
 
-    if not double_bottom_stocks.empty:
-        logging.info("Successfully retrieved double bottom stocks")
 
-    logging.info("Saving data to CSV")
-    save_to_csv(double_bottom_stocks)
+def main(pattern: str, base_folder: str, filename: str, found_rgb_lines: tuple):
 
-    first_ticker = double_bottom_stocks['Ticker'].iloc[0]
+    stocks_df = read_stocks_from_csv(filename)
+    image_folder = f'{base_folder}/{pattern}_images'
+
+    if not os.path.exists(image_folder):
+        os.makedirs(image_folder)
+
+    first_ticker = stocks_df['Ticker'].iloc[0]
 
     if first_ticker:
-        folder = f'{first_ticker}_assets'
 
-        chart_img_path = scan_chart_image(ticker=first_ticker)
-        # chart_img_path = f'{ticker}_chart.png'
+        chart_img_path = scan_chart_image(ticker=first_ticker, image_folder=image_folder)
 
-        focus_on_lines_img_path = save_img_using_shape_from_color_lines(ticker=first_ticker, img_path=chart_img_path, color_rgb=(37, 111, 149), line_radius=60)
+        focus_on_lines_img_path = save_img_using_shape_from_color_lines(ticker=first_ticker, img_path=chart_img_path, color_rgb=found_rgb_lines, line_radius=60)
 
         vertical_cropped_img_path = save_imgs_using_croping(ticker=first_ticker, img_path=focus_on_lines_img_path, vertical_line_color=(0, 0, 255))
 
@@ -503,26 +471,20 @@ def main():
 
         painted_img_path = paint_red_line_white_space(ticker=first_ticker, img_path=covered_on_black_img_path, rad_rgb=(0, 0, 255))
         
-        number_of_cropped = crop_img_using_red_line(ticker=first_ticker, img_path=painted_img_path, rad_rgb=(0, 0, 255), is_vertical_scan=True)
+        extracted_num_paths = crop_img_using_red_line(ticker=first_ticker, img_path=painted_img_path, rad_rgb=(0, 0, 255), is_vertical_scan=True)
 
-        for i in range(number_of_cropped):
-
-            print(f"Processing crop {i}")
-            img_path = f'{first_ticker}_crop_{i}.png'
+        for img_path in extracted_num_paths:
             numbers = get_numbers_from_image(img_path)
             print(f"Numbers found in the image: {numbers}")
 
 
 if __name__ == "__main__":
 
-    screener_url = 'https://finviz.com/screener.ashx?v=210&s='
     pattern = 'ta_p_channel'
-    total_pages = 5
-    page_size = 12
-    
-    for i in range(total_pages):
-        page_num = 1 + (page_size * i)
-        print(f'r={page_num}')
+    base_folder = 'assets'
+    filename = f'{base_folder}/stocks_pattern_{pattern}.csv'
+    found_blue_lines = (37, 111, 149)
+    # found_parpel_lines = (142, 73, 156)
 
-    # main()
+    main(pattern, base_folder, filename, found_blue_lines)
 
