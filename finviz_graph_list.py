@@ -83,16 +83,4 @@ def main(screener_url, pattern, total_pages, page_size, objects, filename):
             objects += page_size
 
     save_to_csv(pattern_df, filename)
-
-
-if __name__ == "__main__":
-
-    screener_url = 'https://finviz.com/screener.ashx?v=110&s='
-    pattern = 'ta_p_channel'
-    total_pages = 3
-    page_size = 20
-    objects = 0
-    folder = 'assets'
-    filename = f'{folder}/stocks_pattern_{pattern}.csv'
-
-    main(screener_url, pattern, total_pages, page_size, objects, filename)
+    return pattern_df

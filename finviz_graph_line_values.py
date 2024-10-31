@@ -1,6 +1,3 @@
-import requests
-from bs4 import BeautifulSoup
-import pandas as pd
 import time
 import cv2
 import numpy as np
@@ -11,11 +8,8 @@ from selenium.webdriver.support import expected_conditions as EC
 import logging
 from PIL import Image
 import io
-from datetime import datetime
-from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.chrome.options import Options
 import pytesseract
-import re
 import os
 
 import matplotlib.pyplot as plt
@@ -87,6 +81,19 @@ def close_popup_ad(driver):
         logging.warning(f"No popup ad found or unable to close: {str(e)}")
 
 
+def close_popup_privacy(driver):
+    logging.info("Attempting to close privacy popup")
+    try:
+        time.sleep(html_tags['close_popup_tag']['sleep_before'])
+        close_button = WebDriverWait(driver, html_tags['close_popup_tag']['WebDriverWait']).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[mode="primary"]'))
+        )
+        close_button.click()
+        logging.info("Privacy popup closed successfully")
+    except Exception as e:
+        logging.warning(f"No privacy popup found or unable to close: {str(e)}")
+
+
 def apply_white_theme(driver):
     logging.info("Attempting to apply white theme")
     try:
@@ -155,11 +162,15 @@ def scan_chart_image(ticker: str, image_folder: str):
     chrome_options.add_argument("--ignore-ssl-errors")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--enable-unsafe-swiftshader")
+    chrome_options.add_argument("--disable-software-rasterizer")
 
     driver = None
     try:
         driver = webdriver.Chrome(options=chrome_options)
         driver.get(f"https://finviz.com/quote.ashx?t={ticker}&ty=c&p=d&b=1")
+
+        # close_popup_privacy(driver)
 
         apply_white_theme(driver)
         close_popup_ad(driver)
@@ -176,7 +187,12 @@ def scan_chart_image(ticker: str, image_folder: str):
             driver.quit()
 
 
-def save_img_using_shape_from_color_lines(ticker: str, img_path: str, color_rgb: tuple[int, int, int], line_radius: int):
+def save_img_using_shape_from_color_lines(ticker: str, img_path: str, color_rgb: tuple[int, int, int], line_radius: int, covered_line_rgb: tuple[int, int, int], detect_minLineLength: int):
+    """
+    Process image to detect lines using HoughLinesP with parameters:
+    threshold=40 (min votes needed), minLineLength=400 (min pixel length),
+    maxLineGap=20 (max gap between line segments to treat as single line)
+    """
     logging.info(f"Starting save image based on lines")
     try:
         # Read the image
@@ -209,7 +225,7 @@ def save_img_using_shape_from_color_lines(ticker: str, img_path: str, color_rgb:
         edges = cv2.Canny(gray, 50, 150, apertureSize=3)
         
         # Detect lines using HoughLinesP
-        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=50, maxLineGap=10)
+        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=40, minLineLength=detect_minLineLength, maxLineGap=20)
         
         # Create a blank mask to draw the shape
         shape_mask = np.zeros(img.shape[:2], dtype=np.uint8)
@@ -227,21 +243,21 @@ def save_img_using_shape_from_color_lines(ticker: str, img_path: str, color_rgb:
         # Apply the shape mask to the original image
         result_image = cv2.bitwise_and(img, img, mask=shape_mask)
         
-        # Draw the blue lines on top of the result image
+        # Draw the orange lines on top of the result image
         if lines is not None:
             for line in lines:
                 x1, y1, x2, y2 = line[0]
-                cv2.line(result_image, (x1, y1), (x2, y2), color_rgb, 2)
+                cv2.line(result_image, (x1, y1), (x2, y2), covered_line_rgb, 2)
                 
                 vertical_line_color = (0, 0, 255)
-                # Add a definite sign (red vertical line) on the right side of blue lines
+                # Add a definite sign (red vertical line) on the right side of orange lines
                 cv2.line(result_image, (x2, 0), (x2, result_image.shape[0]), vertical_line_color, 2)
 
-        # Save the image with the blue line and surrounding text
+        # Save the image with the orange line and surrounding text
         focused_lines_path = img_path.replace('.png', '_focused_lines.png')
         cv2.imwrite(focused_lines_path, result_image)
 
-        logging.info("Successfully saved image based on lines")
+        logging.info(f"Successfully saved image based on lines.")
         return focused_lines_path
     
     except Exception as e:
@@ -439,52 +455,143 @@ def cover_vertical_rgb_lines_when_rgb_pixel_found(img_path: str, found_pixel_rgb
     return output_path
 
 
-def read_stocks_from_csv(filename: str) -> pd.DataFrame:
-    try:
-        stocks_df = pd.read_csv(filename)
-        logging.info(f"Successfully read data from {filename}")
-        return stocks_df
-    except Exception as e:
-        logging.error(f"Error reading CSV file {filename}: {str(e)}")
-        return pd.DataFrame()
+def count_printed_lines(img_path: str, vertical_line_color: tuple, covered_line_rgb: tuple):
+    
+    # Load the image
+    img = cv2.imread(img_path)
+    
+    # Find the x-coordinate of the vertical line from right
+    height, width = img.shape[:2]
+    for x in range(width - 1, -1, -1):
+        if np.all(img[:, x] == vertical_line_color):
+            break
+    
+    # Crop the image from the left edge to just before the vertical line
+    cropped_img = img[:, x-10:x-5]
+    
+    # Save the cropped image
+    cropped_img_path = img_path.replace('.png', '_for_counting_detected_lines.png')
+    cv2.imwrite(cropped_img_path, cropped_img)
+    
+    # Count groups of covered_line_rgb pixels
+    line_groups = 0
+    in_line = False
+    
+    # Scan each row
+    for y in range(height):
+        # Check if any pixel in this row matches covered_line_rgb
+        if any(np.all(cropped_img[y, x] == covered_line_rgb) for x in range(cropped_img.shape[1])):
+            if not in_line:
+                line_groups += 1
+                in_line = True
+        else:
+            in_line = False
+            
+    logging.info(f"Found {line_groups} groups of covered lines")
+    return line_groups
 
 
-def main(pattern: str, base_folder: str, filename: str, found_rgb_lines: tuple):
+def delete_all_the_images(image_folder: str, img_ending: str):
+    for file in os.listdir(image_folder):
+        if not file.endswith(img_ending):
+            os.remove(os.path.join(image_folder, file))
 
-    stocks_df = read_stocks_from_csv(filename)
+
+def main(pattern: str, base_folder: str, filename: str, ticker_name: str, found_blue_lines: tuple, found_purple_lines: tuple, covered_line_rgb: tuple, detect_minLineLength: int):
+
     image_folder = f'{base_folder}/{pattern}_images'
 
     if not os.path.exists(image_folder):
         os.makedirs(image_folder)
 
-    first_ticker = stocks_df['Ticker'].iloc[0]
+    chart_img_path = scan_chart_image(ticker=ticker_name, image_folder=image_folder)
+    # chart_img_path = f'assets/ta_p_channel_images/{ticker_name}_chart.png'
 
-    if first_ticker:
-
-        chart_img_path = scan_chart_image(ticker=first_ticker, image_folder=image_folder)
-
-        focus_on_lines_img_path = save_img_using_shape_from_color_lines(ticker=first_ticker, img_path=chart_img_path, color_rgb=found_rgb_lines, line_radius=60)
-
-        vertical_cropped_img_path = save_imgs_using_croping(ticker=first_ticker, img_path=focus_on_lines_img_path, vertical_line_color=(0, 0, 255))
-
-        covered_on_black_img_path = cover_vertical_rgb_lines_when_rgb_pixel_found(img_path=vertical_cropped_img_path, found_pixel_rgb=(0, 0, 0), covered_line_rgb=(255, 255, 255))
-
-        painted_img_path = paint_red_line_white_space(ticker=first_ticker, img_path=covered_on_black_img_path, rad_rgb=(0, 0, 255))
+    line_colors = [
+        (found_blue_lines, 'blue'),
+        (found_purple_lines, 'purple')
+    ]
+    
+    results = {}
+    for color_rgb, color_name in line_colors:
+        focus_on_lines_img_path = save_img_using_shape_from_color_lines(
+            ticker=ticker_name,
+            img_path=chart_img_path,
+            color_rgb=color_rgb,
+            line_radius=60,
+            covered_line_rgb=covered_line_rgb,
+            detect_minLineLength=detect_minLineLength
+        )
         
-        extracted_num_paths = crop_img_using_red_line(ticker=first_ticker, img_path=painted_img_path, rad_rgb=(0, 0, 255), is_vertical_scan=True)
-
+        lines_counter = count_printed_lines(
+            img_path=focus_on_lines_img_path,
+            vertical_line_color=(0, 0, 255),
+            covered_line_rgb=covered_line_rgb
+        )
+        
+        if lines_counter != 1:
+            text = f"Found {lines_counter}. expected to find 1"
+            logging.info(text)
+            return [], []
+            
+        vertical_cropped_img_path = save_imgs_using_croping(
+            ticker=ticker_name,
+            img_path=focus_on_lines_img_path,
+            vertical_line_color=(0, 0, 255)
+        )
+        
+        covered_on_black_img_path = cover_vertical_rgb_lines_when_rgb_pixel_found(
+            img_path=vertical_cropped_img_path,
+            found_pixel_rgb=(0, 0, 0),
+            covered_line_rgb=(255, 255, 255)
+        )
+        
+        painted_img_path = paint_red_line_white_space(
+            ticker=ticker_name,
+            img_path=covered_on_black_img_path,
+            rad_rgb=(0, 0, 255)
+        )
+        
+        extracted_num_paths = crop_img_using_red_line(
+            ticker=ticker_name,
+            img_path=painted_img_path,
+            rad_rgb=(0, 0, 255),
+            is_vertical_scan=True
+        )
+        
+        color_numbers = []
         for img_path in extracted_num_paths:
-            numbers = get_numbers_from_image(img_path)
-            print(f"Numbers found in the image: {numbers}")
+            number = get_numbers_from_image(img_path)
+            try:
+                cleaned_number = float(str(number).strip().replace(' ', ''))
+                color_numbers.append(cleaned_number)
+                print(f"Valid {color_name} number found in image: {cleaned_number}")
+            except ValueError:
+                print(f"Invalid {color_name} number found in image: {number}")
+                continue
+                
+        results[color_name] = color_numbers
+    
+    # delete_all_the_images(image_folder, img_ending="_chart.png")
+    return results['purple'], results['blue']
 
 
-if __name__ == "__main__":
 
-    pattern = 'ta_p_channel'
-    base_folder = 'assets'
-    filename = f'{base_folder}/stocks_pattern_{pattern}.csv'
-    found_blue_lines = (37, 111, 149)
-    # found_parpel_lines = (142, 73, 156)
+# if __name__ == "__main__":
 
-    main(pattern, base_folder, filename, found_blue_lines)
+#     ticker_name = 'BIL'
 
+#     screener_url = 'https://finviz.com/screener.ashx?v=110&s='
+#     pattern = 'ta_p_channel'
+#     total_pages = 3
+#     page_size = 20
+#     objects = 0
+#     folder = 'assets'
+#     filename = f'{folder}/stocks_pattern_{pattern}.csv'
+#     detect_minLineLength = 400
+#     covered_line_rgb = (0, 165, 255)
+#     found_blue_lines = (37, 111, 149)
+#     found_purple_lines = (142, 73, 156)
+
+#     purple, blue = main(pattern, folder, filename, ticker_name, found_blue_lines, found_purple_lines, covered_line_rgb, detect_minLineLength)
+#     print(f"Purple: {purple}, Blue: {blue}")
