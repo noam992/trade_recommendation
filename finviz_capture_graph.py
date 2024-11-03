@@ -110,8 +110,8 @@ def save_chart_img(driver, ticker, image_folder: str, scroll_amount: int):
 
 
 def scan_chart_image(ticker: str, image_folder: str):
-    scroll_amount = 280
-    chrome_zoom = 1.50
+    scroll_amount = 400
+    chrome_zoom = 1.75
 
     logging.info(f"Starting chart scan for {ticker}")
     chrome_options = Options()
@@ -160,5 +160,5 @@ def main(pattern: str, base_folder: str, ticker_name: str):
 
 
 # if __name__ == "__main__":
-#     result = main(pattern = 'ta_p_channel', base_folder = 'assets', ticker_name = 'ACCD')
+#     result = main(pattern = 'ta_p_channel', base_folder = 'assets', ticker_name = 'CRNC')
 #     print(result)
