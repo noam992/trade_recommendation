@@ -214,8 +214,8 @@ def get_numbers_from_image(img_path: str, image) -> list:
     return numbers
 
 
-def save_imgs_using_croping(ticker: str, img_path: str, image, vertical_line_color: tuple):
-    logging.info(f"Starting save_imgs_using_croping for {ticker}")
+def crop_graph_area_by_red_line(ticker: str, img_path: str, image, vertical_line_color: tuple):
+    logging.info(f"Starting crop_graph_area_by_red_line for {ticker}")
     
     # Load the image
     img = image # cv2.imread(img_path)
@@ -233,7 +233,25 @@ def save_imgs_using_croping(ticker: str, img_path: str, image, vertical_line_col
     img_path = img_path.replace('.png', '_cropped.png')
     cv2.imwrite(img_path, cropped_img)
     
-    logging.info(f"Finished save_imgs_using_croping for {ticker}")
+    logging.info(f"Finished crop_graph_area_by_red_line for {ticker}")
+    return img_path, cropped_img
+
+
+def crop_graph_area(ticker: str, img_path: str, image):
+    logging.info(f"Starting crop_graph_area for {ticker}")
+    
+    # Load the image
+    img = image
+    
+    # Keep only the rightmost 100 pixels
+    height, width = img.shape[:2]
+    cropped_img = img[:, max(0, width-80):]
+    
+    # Save the cropped image
+    img_path = img_path.replace('.png', '_cropped.png')
+    cv2.imwrite(img_path, cropped_img)
+    
+    logging.info(f"Finished crop_graph_area for {ticker}")
     return img_path, cropped_img
 
 
@@ -344,17 +362,31 @@ def replace_yellow_with_white(ticker: str, img_path: str, image, yellow_rgb: tup
         # Load the image
         img = image.copy()  # Create a copy to avoid modifying original
         
-        # Convert image to HSV color space for better yellow detection
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        # Define yellow color range based on input yellow_rgb
+        lower_yellow = np.array([max(0, c - 50) for c in yellow_rgb])
+        upper_yellow = np.array([min(255, c + 50) for c in yellow_rgb])
         
-        # Define yellow color range in HSV
-        # Yellow is around 60 in Hue channel
-        lower_yellow = np.array([20, 100, 100])  # More permissive lower bound
-        upper_yellow = np.array([40, 255, 255])  # More permissive upper bound
+        # Create mask for yellow pixels using RGB ranges
+        yellow_mask = cv2.inRange(img, lower_yellow, upper_yellow)
         
-        # Create mask for yellow pixels
-        yellow_mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
-        
+        # Get dimensions of detected mask area
+        mask_coords = cv2.findNonZero(yellow_mask)
+        if mask_coords is not None:
+            x, y, w, h = cv2.boundingRect(mask_coords)
+            # Add small white border around detected yellow area
+            border_size = 1
+            cv2.rectangle(img, 
+                         (max(0, x-border_size), max(0, y-border_size)), 
+                         (min(img.shape[1], x+(w-1)+border_size), min(img.shape[0], y+(h-1)+border_size)), 
+                         white_rgb, 
+                         border_size)
+            
+            # Fill white to the left and right of the mask
+            img[y:y+h, 0:x] = white_rgb  # Fill left side
+            img[y:y+h, x+w:img.shape[1]] = white_rgb  # Fill right side
+            
+            logging.info(f"Detected yellow area - Width: {w}, Height: {h}")
+
         # Replace yellow pixels with white
         img[yellow_mask > 0] = white_rgb
         
@@ -390,7 +422,7 @@ def crop_black_area(ticker: str, img_path: str, image):
         cropped = img[y:y+h, x:x+w]
         
         # Save cropped image
-        output_path = img_path.replace('.png', '_cropped.png')
+        output_path = img_path.replace('.png', '_cropped_vertical.png')
         cv2.imwrite(output_path, cropped)
         
         logging.info(f"Finished crop_black_area for {ticker}")
@@ -437,9 +469,9 @@ def count_printed_lines(img_path: str, image, vertical_line_color: tuple, covere
     return line_groups
 
 
-def delete_all_the_images(image_folder: str, img_ending: str):
+def delete_all_the_images(image_folder: str, img_endings: list):
     for file in os.listdir(image_folder):
-        if not file.endswith(img_ending):
+        if not any(file.endswith(ending) for ending in img_endings):
             os.remove(os.path.join(image_folder, file))
 
 
@@ -475,11 +507,17 @@ def main(graph_img_path: str, ticker_name: str, found_blue_lines: tuple, found_p
             logging.info(text)
             return [], []
             
-        img_path_2, img_2 = save_imgs_using_croping(
+        # img_path_2, img_2 = crop_graph_area_by_red_line(
+        #     ticker=ticker_name,
+        #     img_path=img_path_1,
+        #     image=img_1,
+        #     vertical_line_color=(0, 0, 255)
+        # )
+
+        img_path_2, img_2 = crop_graph_area(
             ticker=ticker_name,
             img_path=img_path_1,
-            image=img_1,
-            vertical_line_color=(0, 0, 255)
+            image=img_1
         )
 
         img_path_3, img_3 = crop_black_area(
@@ -492,7 +530,7 @@ def main(graph_img_path: str, ticker_name: str, found_blue_lines: tuple, found_p
             ticker=ticker_name,
             img_path=img_path_3,
             image=img_3,
-            yellow_rgb=(254, 242, 1),
+            yellow_rgb=(0, 255, 255),
             white_rgb=(255, 255, 255)
         )
         
@@ -521,9 +559,9 @@ def main(graph_img_path: str, ticker_name: str, found_blue_lines: tuple, found_p
                 if not num.strip():  # Skip empty strings
                     continue
                 try:
-                    cleaned_number = float(num.strip().replace(' ', ''))
-                    price_up_bound = ticker_price * 6
-                    price_down_bound = ticker_price / 6
+                    cleaned_number = float(num.strip().replace(' ', '').replace(',', '.'))
+                    price_up_bound = ticker_price * 7
+                    price_down_bound = ticker_price / 7
                     if price_down_bound <= cleaned_number <= price_up_bound:
                         color_numbers.append(cleaned_number)
                         logging.info(f"Valid {color_name} number found in image: {cleaned_number}")
@@ -535,20 +573,16 @@ def main(graph_img_path: str, ticker_name: str, found_blue_lines: tuple, found_p
                 
         results[color_name] = color_numbers
     
-    delete_all_the_images(base_graph_img_path, img_ending="_chart.png")
+    delete_all_the_images(base_graph_img_path, img_endings=['_chart.png'])
     return results['purple'], results['blue']
 
 
 # if __name__ == "__main__":
 
-#     ticker_name = 'ACCD'
-#     ticker_price = 3.2
+#     ticker_name = 'KCSH'
+#     ticker_price = 25.10
 
-#     graph_img_path = 'assets/ta_p_channel_images/ACCD_chart.png'
-#     total_pages = 3
-#     page_size = 20
-#     objects = 0
-#     folder = 'assets'
+#     graph_img_path = f'assets/ta_p_channel_images/{ticker_name}_chart.png'
 #     covered_line_rgb = (0, 165, 255)
 #     found_blue_lines = (37, 111, 149)
 #     found_purple_lines = (142, 73, 156)

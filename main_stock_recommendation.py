@@ -52,7 +52,8 @@ def main():
         ticker_name  = row['Ticker']
         ticker_price = float(row['Price'])
 
-        graph_img_path = get_finviz_capture_graph(pattern, folder, ticker_name)
+        # graph_img_path = get_finviz_capture_graph(pattern, folder, ticker_name)
+        graph_img_path = f'assets/ta_p_channel_images/{ticker_name}_chart.png'
 
         purple_result, blue_result = get_finviz_line_values(graph_img_path, ticker_name, found_blue_lines, found_purple_lines, covered_line_rgb, ticker_price)
                                                         
