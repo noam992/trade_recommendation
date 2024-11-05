@@ -579,8 +579,8 @@ def main(graph_img_path: str, ticker_name: str, found_blue_lines: tuple, found_p
 
 # if __name__ == "__main__":
 
-#     ticker_name = 'KCSH'
-#     ticker_price = 25.10
+#     ticker_name = 'TC'
+#     ticker_price = 0.9099
 
 #     graph_img_path = f'assets/ta_p_channel_images/{ticker_name}_chart.png'
 #     covered_line_rgb = (0, 165, 255)

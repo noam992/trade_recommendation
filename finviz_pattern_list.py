@@ -66,10 +66,32 @@ def save_to_csv(df, filename):
     logging.info(f"Data saved to {filename}")
 
 
-def main(screener_url, pattern, total_pages, page_size, objects, filename):
+def get_total_pages(screener_url, pattern):
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+
+    full_url = f'{screener_url}{pattern}'
+    response = requests.get(full_url, headers=headers)
+    soup = BeautifulSoup(response.content, 'html.parser')
+    
+    pagination = soup.find('td', {'id': 'screener_pagination'})
+    if pagination:
+        links = pagination.find_all('a')
+        # Filter out the 'NEXT' link and get the last number
+        page_numbers = [int(link.text) for link in links if link.text.isdigit()]
+        if page_numbers:
+            return max(page_numbers)
+    return 1  # Return 1 if no pagination found
+
+
+def main(screener_url, pattern, page_size, objects, filename):
 
     pattern_df = pd.DataFrame()
     tmp_pattern_df = pd.DataFrame()
+
+    total_pages = get_total_pages(screener_url, pattern)
 
     for i in range(total_pages):
         full_url = f'{screener_url}{pattern}&r={objects}'
