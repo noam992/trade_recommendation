@@ -56,7 +56,7 @@ def get_chart_lines(img_path: str, color_rgb: tuple[int, int, int]):
     return line_image
 
 
-def save_img_using_shape_from_color_lines(ticker: str, img_path: str, color_rgb: tuple[int, int, int], line_frame: int, covered_line_rgb: tuple[int, int, int], detect_minLineLength: int):
+def detect_straight_line_by_color(ticker: str, img_path: str, color_rgb: tuple[int, int, int], line_frame: int, covered_line_rgb: tuple[int, int, int], detect_minLineLength: int):
     """
     Process image to detect horizontal lines (180 degrees) using HoughLinesP with parameters:
     threshold=40 (min votes needed), minLineLength=400 (min pixel length),
@@ -136,6 +136,19 @@ def save_img_using_shape_from_color_lines(ticker: str, img_path: str, color_rgb:
         cv2.imwrite(img_path, img)
 
         logging.info(f"Successfully saved image based on horizontal lines.")
+    
+        lines_counter = count_printed_lines(
+            img_path=img_path,
+            image=img,
+            vertical_line_color=(0, 0, 255),
+            covered_line_rgb=covered_line_rgb
+        )
+        
+        if lines_counter != 1:
+            text = f"Found {lines_counter}. expected to find 1"
+            logging.info(text)
+            return [], []
+        
         return img_path, img
     
     except Exception as e:
@@ -475,106 +488,78 @@ def delete_all_the_images(image_folder: str, img_endings: list):
             os.remove(os.path.join(image_folder, file))
 
 
-def main(graph_img_path: str, ticker_name: str, found_blue_lines: tuple, found_purple_lines: tuple, covered_line_rgb: tuple, ticker_price: float):
+def main(img_path: str, img, ticker_name: str, ticker_price: float):
 
-    base_graph_img_path = os.path.dirname(graph_img_path)
-
-    line_colors = [
-        (found_blue_lines, 'blue'),
-        (found_purple_lines, 'purple')
-    ]
+    base_graph_img_path = os.path.dirname(img_path)
     
-    results = {}
-    for color_rgb, color_name in line_colors:
-        img_path_1, img_1 = save_img_using_shape_from_color_lines(
-            ticker=ticker_name,
-            img_path=graph_img_path,
-            color_rgb=color_rgb,
-            line_frame=60,
-            covered_line_rgb=covered_line_rgb,
-            detect_minLineLength=50
-        )
-        
-        lines_counter = count_printed_lines(
-            img_path=img_path_1,
-            image=img_1,
-            vertical_line_color=(0, 0, 255),
-            covered_line_rgb=covered_line_rgb
-        )
-        
-        if lines_counter != 1:
-            text = f"Found {lines_counter}. expected to find 1"
-            logging.info(text)
-            return [], []
-            
-        # img_path_2, img_2 = crop_graph_area_by_red_line(
-        #     ticker=ticker_name,
-        #     img_path=img_path_1,
-        #     image=img_1,
-        #     vertical_line_color=(0, 0, 255)
-        # )
+    # img_path_2, img_2 = crop_graph_area_by_red_line(
+    #     ticker=ticker_name,
+    #     img_path=img_path_1,
+    #     image=img_1,
+    #     vertical_line_color=(0, 0, 255)
+    # )
 
-        img_path_2, img_2 = crop_graph_area(
-            ticker=ticker_name,
-            img_path=img_path_1,
-            image=img_1
-        )
+    img_path_2, img_2 = crop_graph_area(
+        ticker=ticker_name,
+        img_path=img_path,
+        image=img
+    )
 
-        img_path_3, img_3 = crop_black_area(
-            ticker=ticker_name,
-            img_path=img_path_2,
-            image=img_2
-        )
+    img_path_3, img_3 = crop_black_area(
+        ticker=ticker_name,
+        img_path=img_path_2,
+        image=img_2
+    )
         
-        img_path_4, img_4 = replace_yellow_with_white(
-            ticker=ticker_name,
-            img_path=img_path_3,
-            image=img_3,
-            yellow_rgb=(0, 255, 255),
-            white_rgb=(255, 255, 255)
-        )
+    img_path_4, img_4 = replace_yellow_with_white(
+        ticker=ticker_name,
+        img_path=img_path_3,
+        image=img_3,
+        yellow_rgb=(0, 255, 255),
+        white_rgb=(255, 255, 255)
+    )
         
-        img_path_5, img_5 = paint_red_line_white_space(
-            ticker=ticker_name,
-            img_path=img_path_4,
-            image=img_4,
-            rad_rgb=(0, 0, 255)
-        )
+    img_path_5, img_5 = paint_red_line_white_space(
+        ticker=ticker_name,
+        img_path=img_path_4,
+        image=img_4,
+        rad_rgb=(0, 0, 255)
+    )
         
-        img_paths_6, imgs_6 = crop_img_using_red_line(
-            ticker=ticker_name,
-            img_path=img_path_5,
-            image=img_5,
-            rad_rgb=(0, 0, 255),
-            is_vertical_scan=True
-        )
+    img_paths_6, imgs_6 = crop_img_using_red_line(
+        ticker=ticker_name,
+        img_path=img_path_5,
+        image=img_5,
+        rad_rgb=(0, 0, 255),
+        is_vertical_scan=True
+    )
         
-        color_numbers = []
-        for img_path_6, img_6 in zip(img_paths_6, imgs_6):
-            number = get_numbers_from_image(img_path_6, img_6)
-            # Split the string into separate numbers if there are multiple
-            number_list = str(number).strip().split('\n')
+    color_numbers = []
+    for img_path_6, img_6 in zip(img_paths_6, imgs_6):
+        number = get_numbers_from_image(img_path_6, img_6)
+        # Split the string into separate numbers if there are multiple
+        number_list = str(number).strip().split('\n')
             
-            for num in number_list:
-                if not num.strip():  # Skip empty strings
-                    continue
-                try:
-                    cleaned_number = float(num.strip().replace(' ', '').replace(',', '.'))
-                    price_up_bound = ticker_price * 7
-                    price_down_bound = ticker_price / 7
-                    if price_down_bound <= cleaned_number <= price_up_bound:
-                        color_numbers.append(cleaned_number)
-                        logging.info(f"Valid {color_name} number found in image: {cleaned_number}")
-                    else:
-                        logging.info(f"Number {cleaned_number} is outside valid price range [{price_down_bound}, {price_up_bound}]")
-                except ValueError:
-                    logging.info(f"Invalid {color_name} number found in image: {num}")
-                    continue
+        for num in number_list:
+            if not num.strip():  # Skip empty strings
+                continue
+            try:
+                cleaned_number = float(num.strip().replace(' ', '').replace(',', '.'))
+                price_up_bound = ticker_price * 7
+                price_down_bound = ticker_price / 7
+                if price_down_bound <= cleaned_number <= price_up_bound:
+                    color_numbers.append(cleaned_number)
+                    logging.info(f"Valid number found in image: {cleaned_number}")
+                else:
+                    logging.info(f"Number {cleaned_number} is outside valid price range [{price_down_bound}, {price_up_bound}]")
+            except ValueError:
+                logging.info(f"Invalid number found in image: {num}")
+                continue
                 
-        results[color_name] = color_numbers
+    color_numbers
     
     delete_all_the_images(base_graph_img_path, img_endings=['_chart.png'])
-    return results['purple'], results['blue']
+    return color_numbers
 
 
 # if __name__ == "__main__":
