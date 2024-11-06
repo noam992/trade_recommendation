@@ -130,7 +130,7 @@ def scan_chart_image(ticker: str, image_folder: str):
         driver = webdriver.Chrome(options=chrome_options)
         driver.get(f"https://finviz.com/quote.ashx?t={ticker}&ty=c&p=d&b=1")
 
-        # close_popup_privacy(driver)
+        close_popup_privacy(driver)
 
         apply_white_theme(driver)
         close_popup_ad(driver)

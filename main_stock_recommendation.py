@@ -2,7 +2,7 @@ import logging
 import pandas as pd
 from finviz_pattern_list import main as get_finviz_pattern_list
 from finviz_capture_graph import main as get_finviz_capture_graph
-from finviz_line_values import main as get_finviz_line_values
+from finviz_line_values import main as get_finviz_line_values, detect_straight_line_by_color
 from measure_calculations import channel_range, ratio_of_current_price_to_channel_range
 
 
@@ -17,8 +17,10 @@ objects = 0
 folder = 'assets'
 filename = f'{folder}/stocks_pattern_{pattern}.csv'
 covered_line_rgb = (0, 165, 255)
-found_blue_lines = (37, 111, 149)
-found_purple_lines = (142, 73, 156)
+line_colors = [
+    ((37, 111, 149), 'support_rgb'), # blue
+    ((142, 73, 156), 'resistance_rgb') # purple
+]
 
 
 def read_stocks_from_csv(filename: str) -> pd.DataFrame:
@@ -39,12 +41,12 @@ def save_to_csv(df, path_to_save):
 
 def main():
 
-    # stocks_df = get_finviz_pattern_list(screener_url, pattern, page_size, objects, filename)
-    stocks_df = read_stocks_from_csv(filename)
+    stocks_df = get_finviz_pattern_list(screener_url, pattern, page_size, objects, filename)
+    # stocks_df = read_stocks_from_csv(filename)
     
     # Initialize new columns with NaN values
-    stocks_df['average_purple'] = float('nan')
-    stocks_df['average_blue'] = float('nan')
+    stocks_df['average_resistance'] = float('nan')
+    stocks_df['average_support'] = float('nan')
     stocks_df['channel_range'] = float('nan')
     stocks_df['current_price_ratio_channel'] = float('nan')
 
@@ -54,25 +56,43 @@ def main():
         ticker_name  = row['Ticker']
         ticker_price = float(row['Price'])
 
-        # graph_img_path = get_finviz_capture_graph(pattern, folder, ticker_name)
-        graph_img_path = f'assets/ta_p_channel_images/{ticker_name}_chart.png'
+        graph_img_path = get_finviz_capture_graph(pattern, folder, ticker_name)
+        # graph_img_path = f'assets/ta_p_channel_images/{ticker_name}_chart.png'
+    
+        results = {'resistance_rgb': [], 'support_rgb': []}
+        for color_rgb, color_name in line_colors:
 
-        purple_result, blue_result = get_finviz_line_values(graph_img_path, ticker_name, found_blue_lines, found_purple_lines, covered_line_rgb, ticker_price)
-                                                        
-        if len(purple_result) > 0 and len(blue_result) > 0:
-            logger.info(f"Purple: {purple_result}, Blue: {blue_result}")
-            average_purple = sum(purple_result) / len(purple_result)
-            average_blue = sum(blue_result) / len(blue_result)
+            img_path, img = detect_straight_line_by_color(
+                ticker=ticker_name,
+                img_path=graph_img_path,
+                color_rgb=color_rgb,
+                line_frame=60,
+                covered_line_rgb=covered_line_rgb,
+                detect_minLineLength=50
+            )
 
-            if average_purple >= average_blue:
-                logger.info(f"Average Purple: {average_purple}, Average Blue: {average_blue}")
-                stocks_df.at[index, 'average_purple'] = average_purple
-                stocks_df.at[index, 'average_blue'] = average_blue
+            if img_path == [] and img == []:
+                logging.info(f"No valid image found for {ticker_name} with {color_name} color - continuing to next iteration")
+                continue
+
+            color_result = get_finviz_line_values(img_path, img, ticker_name, ticker_price)
+
+            results[color_name] = color_result
+
+        if len(results['resistance_rgb']) > 0 and len(results['support_rgb']) > 0:
+            logger.info(f"Resistance: {results['resistance_rgb']}, Dupport: {results['support_rgb']}")
+            average_resistance = sum(results['resistance_rgb']) / len(results['resistance_rgb'])
+            average_support = sum(results['support_rgb']) / len(results['support_rgb'])
+
+            if average_resistance >= average_support:
+                logger.info(f"Average Resistance: {average_resistance}, Average Support: {average_support}")
+                stocks_df.at[index, 'average_resistance'] = average_resistance
+                stocks_df.at[index, 'average_support'] = average_support
                 
                 # Calculate and store channel range and price ratio
                 try:
-                    channel_range_value = channel_range(average_blue, average_purple)
-                    price_ratio = ratio_of_current_price_to_channel_range(ticker_price, average_blue, average_purple)
+                    channel_range_value = channel_range(average_support, average_resistance)
+                    price_ratio = ratio_of_current_price_to_channel_range(ticker_price, average_support, average_resistance)
                     
                     stocks_df.at[index, 'channel_range'] = channel_range_value
                     stocks_df.at[index, 'current_price_ratio_channel'] = price_ratio
