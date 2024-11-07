@@ -8,54 +8,6 @@ import pytesseract
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 
 
-def get_chart_lines(img_path: str, color_rgb: tuple[int, int, int]):
-    # Read the image
-    img = cv2.imread(img_path)
-    
-    # Convert BGR to HSV
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    
-    # Convert RGB color to HSV
-    rgb_color = np.uint8([[color_rgb]])  # RGB color
-    hsv_color = cv2.cvtColor(rgb_color, cv2.COLOR_RGB2HSV)
-    
-    # Get the HSV values
-    hue = hsv_color[0][0][0]
-    
-    # Define range of the color in HSV
-    lower_bound = np.array([max(0, hue - 10), 100, 100])
-    upper_bound = np.array([min(180, hue + 10), 255, 255])
-    
-    # Threshold the HSV image to get only the specified color
-    mask = cv2.inRange(hsv, lower_bound, upper_bound)
-    
-    # Bitwise-AND mask and original image
-    color_only = cv2.bitwise_and(img, img, mask=mask)
-    
-    # Convert to grayscale
-    gray = cv2.cvtColor(color_only, cv2.COLOR_BGR2GRAY)
-    
-    # Apply edge detection
-    edges = cv2.Canny(gray, 50, 150, apertureSize=3)
-    
-    # Detect lines using HoughLinesP
-    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=50, maxLineGap=10)
-    
-    # Create a blank image to draw the lines on
-    line_image = np.zeros_like(img)
-    
-    # Draw the lines on the blank image
-    if lines is not None:
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            cv2.line(line_image, (x1, y1), (x2, y2), (37, 111, 149), 2)
-    
-    # Save the image with only the specified color lines
-    cv2.imwrite('ADEA_specific_color_lines.png', line_image)
-    
-    return line_image
-
-
 def detect_straight_line_by_color(ticker: str, img_path: str, color_rgb: tuple[int, int, int], line_frame: int, covered_line_rgb: tuple[int, int, int], detect_minLineLength: int):
     """
     Process image to detect horizontal lines (180 degrees) using HoughLinesP with parameters:
@@ -154,6 +106,158 @@ def detect_straight_line_by_color(ticker: str, img_path: str, color_rgb: tuple[i
     except Exception as e:
         logging.error(f"Failed to save image based on lines. Error: {str(e)}")
         return None
+
+
+def detect_non_straight_line_by_color(ticker: str, img_path: str, color_rgb: tuple[int, int, int], line_frame: int, covered_line_rgb: tuple[int, int, int], detect_minLineLength: int):
+    """
+    Process image to detect non-straight lines using HoughLinesP with parameters:
+    threshold=40 (min votes needed), minLineLength=400 (min pixel length),
+    maxLineGap=20 (max gap between line segments to treat as single line)
+    """
+    logging.info(f"Starting save image based on lines")
+    try:
+        # Read the image
+        img = cv2.imread(img_path)
+        
+        # Convert BGR to HSV
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        
+        # Convert RGB color to HSV
+        rgb_color = np.uint8([[color_rgb]])  # RGB color
+        hsv_color = cv2.cvtColor(rgb_color, cv2.COLOR_RGB2HSV)
+        
+        # Get the HSV values
+        hue = hsv_color[0][0][0]
+        
+        # Define range of the color in HSV
+        lower_bound = np.array([max(0, hue - 10), 100, 100])
+        upper_bound = np.array([min(180, hue + 10), 255, 255])
+        
+        # Threshold the HSV image to get only the specified color
+        mask = cv2.inRange(hsv, lower_bound, upper_bound)
+        
+        # Bitwise-AND mask and original image
+        color_only = cv2.bitwise_and(img, img, mask=mask)
+        
+        # Convert to grayscale
+        gray = cv2.cvtColor(color_only, cv2.COLOR_BGR2GRAY)
+        
+        # Apply edge detection
+        edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+        
+        # Detect lines using HoughLinesP
+        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=40, minLineLength=detect_minLineLength, maxLineGap=20)
+        
+        # Create a blank mask to draw the shape
+        shape_mask = np.zeros(img.shape[:2], dtype=np.uint8)
+        
+        height = img.shape[0]
+        width = img.shape[1]
+        
+        # Store rightmost vertical line coordinates
+        rightmost_x = 0
+        rightmost_y1 = 0
+        rightmost_y2 = 0
+        rightmost_line_x1 = 0
+        rightmost_line_y1 = 0
+        
+        if lines is not None:
+            for line in lines:
+                x1, y1, x2, y2 = line[0]
+                # Calculate angle of the line
+                angle = np.abs(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+                # Only process non-straight lines (exclude horizontal and vertical)
+                if not (abs(angle - 180) < 5 or angle < 5 or abs(angle - 90) < 5):
+                    cv2.line(img, (x1, y1), (x2, y2), covered_line_rgb, 2)
+                    
+                    vertical_line_color = (0, 0, 255)
+                    # Add a definite sign (red vertical line) at the end of lines
+                    cv2.line(img, (x2, y2-20), (x2, y2+20), vertical_line_color, 2)
+                    
+                    # Track rightmost vertical line
+                    if x2 > rightmost_x:
+                        rightmost_x = x2
+                        rightmost_y1 = y2-20
+                        rightmost_y2 = y2+20
+                        rightmost_line_x1 = x1
+                        rightmost_line_y1 = y1
+        
+        # Draw horizontal red line from rightmost vertical line to non-straight line
+        if rightmost_x > 0:
+            horizontal_line_color = (0, 0, 255)
+            cv2.line(img, (rightmost_x, rightmost_y1+20), (rightmost_line_x1, rightmost_y1+20), horizontal_line_color, 2)
+            
+            # Create mask for entire horizontal area within line_frame height
+            y_center = rightmost_y1+20
+            y_start = y_center - line_frame
+            y_end = y_center + line_frame
+            
+            # Create polygon points for full width horizontal strip
+            pts = np.array([[0, y_start], [width, y_start], 
+                          [width, y_end], [0, y_end]], np.int32)
+            cv2.fillPoly(shape_mask, [pts], 255)
+            
+            # Apply the shape mask to the original image
+            img = cv2.bitwise_and(img, img, mask=shape_mask)
+
+        # Save the image with the detected lines
+        img_path = img_path.replace('.png', '_focused_lines.png')
+        cv2.imwrite(img_path, img)
+
+        logging.info(f"Successfully saved image based on non-straight lines.")
+        return img_path, img
+    
+    except Exception as e:
+        logging.error(f"Failed to save image based on lines. Error: {str(e)}")
+        return None
+
+
+def get_chart_lines(img_path: str, color_rgb: tuple[int, int, int]):
+    # Read the image
+    img = cv2.imread(img_path)
+    
+    # Convert BGR to HSV
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    
+    # Convert RGB color to HSV
+    rgb_color = np.uint8([[color_rgb]])  # RGB color
+    hsv_color = cv2.cvtColor(rgb_color, cv2.COLOR_RGB2HSV)
+    
+    # Get the HSV values
+    hue = hsv_color[0][0][0]
+    
+    # Define range of the color in HSV
+    lower_bound = np.array([max(0, hue - 10), 100, 100])
+    upper_bound = np.array([min(180, hue + 10), 255, 255])
+    
+    # Threshold the HSV image to get only the specified color
+    mask = cv2.inRange(hsv, lower_bound, upper_bound)
+    
+    # Bitwise-AND mask and original image
+    color_only = cv2.bitwise_and(img, img, mask=mask)
+    
+    # Convert to grayscale
+    gray = cv2.cvtColor(color_only, cv2.COLOR_BGR2GRAY)
+    
+    # Apply edge detection
+    edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+    
+    # Detect lines using HoughLinesP
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=50, maxLineGap=10)
+    
+    # Create a blank image to draw the lines on
+    line_image = np.zeros_like(img)
+    
+    # Draw the lines on the blank image
+    if lines is not None:
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            cv2.line(line_image, (x1, y1), (x2, y2), (37, 111, 149), 2)
+    
+    # Save the image with only the specified color lines
+    cv2.imwrite('ADEA_specific_color_lines.png', line_image)
+    
+    return line_image
 
 
 def paint_red_line_white_space(ticker: str, img_path: str, image, rad_rgb: tuple):
@@ -564,13 +668,30 @@ def main(img_path: str, img, ticker_name: str, ticker_price: float):
 
 # if __name__ == "__main__":
 
-#     ticker_name = 'TC'
-#     ticker_price = 0.9099
+#     ticker_name = 'YBTC'
+#     ticker_price = 48.72
 
-#     graph_img_path = f'assets/ta_p_channel_images/{ticker_name}_chart.png'
+#     graph_img_path = f'assets/ta_p_channelup_images/{ticker_name}_chart.png'
 #     covered_line_rgb = (0, 165, 255)
 #     found_blue_lines = (37, 111, 149)
 #     found_purple_lines = (142, 73, 156)
+#     screener_url = 'https://finviz.com/screener.ashx?v=110&s='
+#     pattern = 'ta_p_channel'
+#     page_size = 20
+#     objects = 0
+#     folder = 'assets'
+#     filename = f'{folder}/stocks_pattern_{pattern}.csv'
+#     color_rgb = (142, 73, 156) # (37, 111, 149)
 
-#     purple, blue = main(graph_img_path, ticker_name, found_blue_lines, found_purple_lines, covered_line_rgb, ticker_price)
-#     logging.info(f"Purple: {purple}, Blue: {blue}")
+
+#     img_path, img = detect_non_straight_line_by_color(
+#         ticker=ticker_name,
+#         img_path=graph_img_path,
+#         color_rgb=color_rgb,
+#         line_frame=80,
+#         covered_line_rgb=covered_line_rgb,
+#         detect_minLineLength=50
+#     )
+
+#     result = main(img_path, img, ticker_name, ticker_price)
+#     print(result)

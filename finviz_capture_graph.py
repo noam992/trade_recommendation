@@ -119,9 +119,10 @@ def scan_chart_image(ticker: str, image_folder: str):
     chrome_options.add_argument("--ignore-certificate-errors")
     chrome_options.add_argument("--ignore-ssl-errors")
     chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--enable-unsafe-swiftshader")
     chrome_options.add_argument("--disable-software-rasterizer")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--disable-web-security")
     chrome_options.add_argument(f"--force-device-scale-factor={chrome_zoom}")
 
     driver = None
@@ -130,7 +131,7 @@ def scan_chart_image(ticker: str, image_folder: str):
         driver = webdriver.Chrome(options=chrome_options)
         driver.get(f"https://finviz.com/quote.ashx?t={ticker}&ty=c&p=d&b=1")
 
-        close_popup_privacy(driver)
+        # close_popup_privacy(driver)
 
         apply_white_theme(driver)
         close_popup_ad(driver)
@@ -148,9 +149,7 @@ def scan_chart_image(ticker: str, image_folder: str):
             driver.quit()
 
 
-def main(pattern: str, base_folder: str, ticker_name: str):
-
-    image_folder = f'{base_folder}/{pattern}_images'
+def main(image_folder: str, ticker_name: str):
 
     if not os.path.exists(image_folder):
         os.makedirs(image_folder)
@@ -160,5 +159,5 @@ def main(pattern: str, base_folder: str, ticker_name: str):
 
 
 # if __name__ == "__main__":
-#     result = main(pattern = 'ta_p_channel', base_folder = 'assets', ticker_name = 'CRNC')
+#     result = main(image_folder = 'assets/ta_p_channelup_images', ticker_name = 'YBTC')
 #     print(result)
